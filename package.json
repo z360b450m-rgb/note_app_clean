@@ -1,0 +1,165 @@
+{
+  "name": "cuotiben",
+  "version": "2.1.13",
+  "private": true,
+  "description": "智能错题管理工具 - 记录错题、对比答案、高效复习",
+  "author": "Nie Yulong (聂昱龙)",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "electron",
+    "vue3",
+    "vite",
+    "education"
+  ],
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "postinstall": "patch-package",
+    "build:win:release": "node scripts/build-windows-release.cjs dir",
+    "build:win:installer": "node scripts/build-windows-release.cjs installer",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "vue-tsc --noEmit",
+    "audit:dependencies": "npm audit --audit-level=low",
+    "test:e2e": "python tests/e2e/test_release_flows.py",
+    "prepare": "husky"
+  },
+  "build": {
+    "appId": "com.cuotiben.app",
+    "productName": "错题本",
+    "artifactName": "Cuotiben-Setup-${version}.${ext}",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "public/icon-512.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerLanguages": [
+        "zh_CN",
+        "en_US"
+      ],
+      "shortcutName": "错题本"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "public/icon-512.png",
+      "category": "public.app-category.education"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "public/icon-512.png",
+      "category": "Education"
+    }
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/dompurify": "^3.0.5",
+    "@types/jszip": "^3.4.0",
+    "@vitejs/plugin-vue": "^5.0.0",
+    "autoprefixer": "^10.4.20",
+    "electron": "^42.4.0",
+    "electron-builder": "^26.15.2",
+    "eslint": "^10.5.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-vue": "^10.9.2",
+    "globals": "^17.6.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.7",
+    "patch-package": "^8.0.1",
+    "postcss": "^8.4.49",
+    "prettier": "^3.8.4",
+    "sharp": "^0.35.2",
+    "tailwindcss": "^3.4.17",
+    "typescript": "~5.6.0",
+    "typescript-eslint": "^8.61.1",
+    "vite": "^6.0.0",
+    "vue-eslint-parser": "^10.4.1",
+    "vue-tsc": "^2.2.0"
+  },
+  "dependencies": {
+    "adm-zip": "^0.6.0",
+    "dompurify": "^3.4.12",
+    "electron-log": "^5.4.4",
+    "gsap": "^3.15.0",
+    "jszip": "^3.10.1",
+    "marked": "^15.0.0",
+    "pdfjs-dist": "^6.0.227",
+    "sql.js": "^1.14.1",
+    "vue": "^3.5.0"
+  },
+  "overrides": {
+    "fast-uri": "3.1.4",
+    "tar": "7.5.19",
+    "@electron/asar": {
+      "brace-expansion": "1.1.16"
+    },
+    "@electron/rebuild": {
+      "node-gyp": {
+        "undici": "6.27.0"
+      }
+    },
+    "@electron/universal": {
+      "brace-expansion": "2.1.2"
+    },
+    "@vue/language-core": {
+      "brace-expansion": "2.1.2"
+    },
+    "app-builder-lib": {
+      "fast-uri": "3.1.4",
+      "js-yaml": "4.3.0",
+      "tar": "7.5.19"
+    },
+    "ejs": {
+      "brace-expansion": "2.1.2"
+    },
+    "electron": {
+      "@electron/get": {
+        "undici": "7.28.0"
+      }
+    },
+    "electron-publish": {
+      "form-data": "4.0.6"
+    },
+    "eslint": {
+      "brace-expansion": "5.0.7"
+    }
+  },
+  "lint-staged": {
+    "*.{js,ts,jsx,tsx,vue,cjs,mjs}": [
+      "prettier --write",
+      "eslint --fix --max-warnings 0"
+    ],
+    "*.{css,scss,html,json,md,yaml,yml}": [
+      "prettier --write"
+    ]
+  }
+}

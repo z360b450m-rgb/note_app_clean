@@ -1,0 +1,64 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main, feat/*]
+  pull_request:
+    branches: [main]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Install Playwright
+        run: |
+          python -m pip install --disable-pip-version-check --requirement requirements-e2e.txt
+          python -m playwright install chromium --with-deps
+
+      - name: Start dev server
+        run: npm run dev -- --host 127.0.0.1 > vite.log 2>&1 &
+        env:
+          NODE_ENV: test
+
+      - name: Wait for server
+        run: |
+          for i in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:5173/ > /dev/null; then
+              echo "Server ready"
+              exit 0
+            fi
+            echo "Waiting... ($i)"
+            sleep 1
+          done
+          echo "Vite did not become ready within 30 seconds" >&2
+          cat vite.log >&2 || true
+          exit 1
+
+      - name: Run E2E tests
+        run: npm run test:e2e
+
+      - name: Upload E2E diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-diagnostics
+          path: |
+            vite.log
+            test-results/
+          if-no-files-found: ignore

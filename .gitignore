@@ -1,0 +1,73 @@
+# --- Node/渚濊禆鍖?---
+node_modules/
+.npm
+package-lock.json.backup
+yarn.lock.backup
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- 鏋勫缓浜х墿 ---
+dist/
+dist-electron/
+dist-electron-*/
+release/
+.electron-builder-cache/
+*.tsbuildinfo
+
+# --- 鐜鍙橀噺 (闈炲父閲嶈) ---
+.env
+.env.local
+.env.*.local
+RAG-AIAgent/.env
+
+# --- Python 鍚庣 ---
+.venv/
+venv/
+__pycache__/
+*.pyc
+RAG-AIAgent/__pycache__/
+RAG-AIAgent/**/__pycache__/
+RAG-AIAgent/**/*.pyc
+RAG-AIAgent/.venv/
+RAG-AIAgent/venv/
+
+# --- 鍚庣杩愯鏃舵暟鎹紙鍚敤鎴锋枃妗?+ KB 鍏冩暟鎹紝涓嶅叆搴擄級 ---
+RAG-AIAgent/data/kb_registry.json
+RAG-AIAgent/data/*/
+!RAG-AIAgent/data/.gitkeep
+
+# --- 缂栬緫鍣ㄤ笌绯荤粺鏂囦欢 ---
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+.vs/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# --- 寮€鍙戣皟璇曚复鏃舵枃浠?---
+*_enter.*
+*_test.*
+*_state.*
+fix_test.*
+debug.png
+PROGRESS.json
+
+# --- 鏈湴鎵撳寘鏍搁獙涓庤В鍖呯紦瀛?---
+.*-package/
+.package-*-check/
+.target-package-check/
+.delete-archive-test/
+assets/
+/icon-180.png
+/icon-192.png
+/icon-512.png
+/icon.svg
+/manifest.json
