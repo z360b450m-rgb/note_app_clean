@@ -1,4 +1,4 @@
-import type { NoteEntry, Notebook, ReviewLog } from '@/types'
+import type { NoteEntry, Notebook, QuestionGroup, ReviewLog } from '@/types'
 
 export interface EntrySnapshot {
   entryId: string
@@ -22,6 +22,13 @@ export interface NotebookRepository {
   getAll(): Promise<Notebook[]>
   put(notebook: Notebook): Promise<void>
   delete(notebookId: string): Promise<void>
+}
+
+export interface QuestionGroupRepository {
+  getAll(notebookId: string): Promise<QuestionGroup[]>
+  get(notebookId: string, groupId: string): Promise<QuestionGroup | undefined>
+  put(notebookId: string, group: QuestionGroup): Promise<void>
+  delete(notebookId: string, groupId: string): Promise<void>
 }
 
 export interface ReviewLogRepository {

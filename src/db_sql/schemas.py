@@ -24,14 +24,26 @@ class EntryCreate(BaseModel):
     correct_answer: Optional[str] = ""
     wrong_answer: Optional[str] = ""
     subject: Optional[str] = ""
+    source: Optional[str] = ""
     tags: List[str] = Field(default_factory=list)
+    drawings: Optional[dict] = None
+    sort_order: Optional[int] = 0
+    folder: Optional[str] = None
+    group_id: Optional[str] = None
+    sub_question_order: Optional[int] = None
 class EntryUpdate(BaseModel):
     title: Optional[str] = None
     question: Optional[str] = None
     correct_answer: Optional[str] = None
     wrong_answer: Optional[str] = None
     subject: Optional[str] = None
+    source: Optional[str] = None
     tags: Optional[List[str]] = None
+    drawings: Optional[dict] = None
+    sort_order: Optional[int] = None
+    folder: Optional[str] = None
+    group_id: Optional[str] = None
+    sub_question_order: Optional[int] = None
     mastery_level: Optional[int] = None
     next_review_date: Optional[int] = None
 # ===========================================================================
@@ -46,7 +58,24 @@ class ReviewLogCreate(BaseModel):
 
 
 # ===========================================================================
-# 4. 用户认证
+# 4. 同题组共享材料
+# ===========================================================================
+class QuestionGroupCreate(BaseModel):
+    id: Optional[str] = None
+    notebook_id: str
+    title: str = ""
+    material: str = ""
+    drawings: Optional[dict] = None
+
+
+class QuestionGroupUpdate(BaseModel):
+    title: Optional[str] = None
+    material: Optional[str] = None
+    drawings: Optional[dict] = None
+
+
+# ===========================================================================
+# 5. 用户认证
 # ===========================================================================
 class UserRegister(BaseModel):
     email: str = Field(min_length=3, max_length=255)

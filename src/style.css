@@ -58,6 +58,43 @@
   margin: 8px 0;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
+
+/* Keep pastel highlights readable in both light and dark themes. */
+.md-content .text-highlight {
+  color: #1f2937;
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.md-content [data-entry-link] {
+  color: #2563eb;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: rgba(37, 99, 235, 0.35);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.md-content [data-entry-link]:hover {
+  color: #1d4ed8;
+  text-decoration-color: currentColor;
+}
+
+.md-content [data-entry-link-state='broken'] {
+  color: #9ca3af;
+  cursor: not-allowed;
+  text-decoration-style: dashed;
+}
+
+.dark .md-content [data-entry-link] {
+  color: #60a5fa;
+  text-decoration-color: rgba(96, 165, 250, 0.4);
+}
+
+.dark .md-content [data-entry-link-state='broken'] {
+  color: #6b7280;
+}
 .md-content h1,
 .md-content h2,
 .md-content h3 {
@@ -132,6 +169,24 @@
 .preserve-input-format {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* Comfortable UI type scale. Rich-text content keeps its own user-controlled size. */
+#app .text-\[10px\] {
+  font-size: 12px;
+}
+#app .text-\[11px\] {
+  font-size: 13px;
+}
+#app .text-\[12px\],
+#app .text-xs {
+  font-size: 14px;
+  line-height: 1.35rem;
+}
+#app .text-\[13px\],
+#app .text-sm {
+  font-size: 15px;
+  line-height: 1.45rem;
 }
 .answer-details img,
 .answer-details video,
@@ -213,4 +268,9 @@
 .section-collapse.active .section-collapse-inner {
   opacity: 1;
   transition: opacity 0.3s ease 0.1s;
+}
+/* Rich-text image selected for resizing. This class is removed before persistence. */
+.md-content img.image-size-selected {
+  outline: 2px solid #d97757;
+  outline-offset: 2px;
 }

@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.db_sql.routers import auth, entries, notebooks, review_logs
+from src.db_sql.routers import auth, entries, notebooks, question_groups, review_logs
 
 
 app = FastAPI(title="Notes MySQL Backend API", version="1.0.0")
@@ -22,6 +22,7 @@ def health_check():
 
 app.include_router(notebooks.router)
 app.include_router(entries.router)
+app.include_router(question_groups.router)
 app.include_router(review_logs.router)
 app.include_router(auth.router)
 

@@ -166,6 +166,20 @@ pip install -r requirements.txt
 uvicorn src.db_sql.main:app --reload
 ```
 
+### 一键启动（Windows）
+
+双击项目根目录的 `start-dev.cmd`，启动器会依次检查 MySQL、启动 FastAPI、启动 Vite，并在服务就绪后打开网页。双击 `stop-dev.cmd` 可以停止由启动器创建的前端和后端进程；MySQL 服务不会被关闭。
+
+也可以在终端中运行：
+
+```bash
+npm run dev:all
+npm run dev:status
+npm run dev:stop
+```
+
+运行日志保存在 `.dev-services` 目录。设置环境变量 `MYSQL_SERVICE_NAME` 可以修改 Windows MySQL 服务名，默认值为 `MySQL80`。
+
 ## Environment Variables
 
 项目使用 `.env` 管理后端配置，常见变量包括：

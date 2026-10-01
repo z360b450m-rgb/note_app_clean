@@ -4,12 +4,24 @@
 import { ref, watch, nextTick, computed, inject, type Ref } from 'vue'
 import CameraCapture from './CameraCapture.vue'
 import ScreenshotPicker from './ScreenshotPicker.vue'
+import RichTextSizeControls from './RichTextSizeControls.vue'
+import QuestionLinkModal from './QuestionLinkModal.vue'
+import type { NoteEntry } from '@/types'
+import { saveImage, toDisplayHtml, toStorageHtml } from '@/services/imageStorage'
+import { useRichTextSizing } from '@/composables/useRichTextSizing'
+import { usePanelFontSize } from '@/composables/usePanelFontSize'
+import { pastePlainText } from '@/utils/plainTextPaste'
+import { decorateInternalLinks } from '@/utils/internalLinks'
 
 const props = defineProps<{
   type: 'wrong' | 'correct'
   hidden: boolean
   modelValue: string
   entryId: string
+  notebookId: string
+  layoutEditing?: boolean
+  formattingActive: boolean
+  entries: NoteEntry[]
 }>()
 
 const emit = defineEmits<{
@@ -17,6 +29,9 @@ const emit = defineEmits<{
   reveal: []
   blur: []
   'mount-canvas': [el: HTMLElement, entryId: string, field: string]
+  'layout-drag-start': [event: PointerEvent]
+  'activate-formatting': [panel: 'wrong' | 'correct']
+  'open-entry': [id: string]
 }>()
 
 const drawingEnabled = inject<Ref<boolean>>('drawingEnabled', ref(false))
@@ -27,6 +42,49 @@ const fileInput = ref<HTMLInputElement | null>(null)
 const camOpen = ref(false)
 const screenshotOpen = ref(false)
 const wrapperRef = ref<HTMLDivElement | null>(null)
+const showQuestionLinkModal = ref(false)
+const linkedTargetId = ref<string | null>(null)
+const { fontSize, fontSizeStyle, setFontSize } = usePanelFontSize(props.type)
+
+const {
+  hasSelectedImage,
+  imageWidth,
+  hasTextSelection,
+  isBold,
+  captureSelection,
+  handleEditorClick,
+  applyFontSize,
+  toggleBold,
+  applyHighlight,
+  applyImageWidth,
+  serializeHtml,
+  resetSizingState,
+  insertInternalLink,
+  removeInternalLink,
+} = useRichTextSizing(() => bodyRef.value, onInput, setFontSize, (targetId) => {
+  linkedTargetId.value = targetId
+  showQuestionLinkModal.value = true
+})
+
+function requestQuestionLink() {
+  linkedTargetId.value = null
+  showQuestionLinkModal.value = true
+}
+
+function chooseQuestionLink(target: NoteEntry) {
+  if (target.id === props.entryId) return
+  if (insertInternalLink(target.id, target.title || '关联题目')) showQuestionLinkModal.value = false
+}
+
+function unlinkQuestion() {
+  if (removeInternalLink()) showQuestionLinkModal.value = false
+}
+
+function openLinkedEntry(id: string) {
+  if (!props.entries.some((entry) => entry.id === id)) return
+  showQuestionLinkModal.value = false
+  emit('open-entry', id)
+}
 
 const isWrong = props.type === 'wrong'
 const label = isWrong ? '错误答案' : '正确答案'
@@ -49,13 +107,25 @@ const hiddenColor = isWrong
 
 let suppressInput = false
 
-const showHidden = computed(() => props.type === 'correct' && props.hidden)
+const showHidden = computed(() => props.hidden)
+
+const visibilityButtonClass = computed(() => {
+  if (isWrong) {
+    return showHidden.value
+      ? 'border-red-500 bg-red-500 text-white hover:bg-red-600'
+      : 'border-red-200 bg-white text-red-600 hover:bg-red-50 dark:border-red-500/30 dark:bg-[#1a1a18] dark:text-red-400 dark:hover:bg-red-500/10'
+  }
+  return showHidden.value
+    ? 'border-emerald-500 bg-emerald-500 text-white hover:bg-emerald-600'
+    : 'border-emerald-200 bg-white text-emerald-600 hover:bg-emerald-50 dark:border-emerald-500/30 dark:bg-[#1a1a18] dark:text-emerald-400 dark:hover:bg-emerald-500/10'
+})
 
 function syncContent() {
   nextTick(() => {
     if (bodyRef.value) {
       suppressInput = true
-      bodyRef.value.innerHTML = props.modelValue
+      bodyRef.value.innerHTML = toDisplayHtml(props.modelValue)
+      decorateInternalLinks(bodyRef.value, props.entries)
       suppressInput = false
     }
   })
@@ -64,6 +134,9 @@ function syncContent() {
 watch(
   () => props.entryId,
   () => {
+    showQuestionLinkModal.value = false
+    linkedTargetId.value = null
+    resetSizingState()
     syncContent()
     nextTick(() => {
       if (canvasContainerRef.value && props.entryId) {
@@ -95,20 +168,36 @@ watch(showHidden, (hidden) => {
   }
 })
 
+watch(
+  () => props.entries.map((entry) => `${entry.id}\u0000${entry.title}`).join('\u0001'),
+  () => {
+    nextTick(() => {
+      if (bodyRef.value) decorateInternalLinks(bodyRef.value, props.entries)
+    })
+  },
+)
+
 function onInput() {
   if (suppressInput) return
   if (bodyRef.value) {
-    emit('update:modelValue', bodyRef.value.innerHTML)
+    emit('update:modelValue', toStorageHtml(serializeHtml()))
   }
 }
 
-function insertImageAtCursor(src: string) {
+async function insertImageAtCursor(source: Blob | string) {
   const el = bodyRef.value
   if (!el) return
+  let displayUrl: string
+  try {
+    displayUrl = (await saveImage(props.notebookId, source)).displayUrl
+  } catch (error) {
+    console.error('Failed to save image', error)
+    return
+  }
   el.focus()
 
   const img = document.createElement('img')
-  img.src = src
+  img.src = displayUrl
   img.style.maxWidth = '100%'
   img.style.borderRadius = '6px'
 
@@ -134,20 +223,16 @@ function insertImageAtCursor(src: string) {
 
 function onPaste(e: ClipboardEvent) {
   const items = e.clipboardData?.items
-  if (!items) return
-  for (const item of items) {
+  for (const item of Array.from(items || [])) {
     if (item.type.startsWith('image/')) {
       e.preventDefault()
       const blob = item.getAsFile()
       if (!blob) continue
-      const reader = new FileReader()
-      reader.onload = () => {
-        insertImageAtCursor(reader.result as string)
-      }
-      reader.readAsDataURL(blob)
-      break
+      void insertImageAtCursor(blob)
+      return
     }
   }
+  if (pastePlainText(e, bodyRef.value)) onInput()
 }
 
 function onDragOver(e: DragEvent) {
@@ -162,11 +247,7 @@ function onDrop(e: DragEvent) {
   e.preventDefault()
   for (const file of files) {
     if (file.type.startsWith('image/')) {
-      const reader = new FileReader()
-      reader.onload = () => {
-        insertImageAtCursor(reader.result as string)
-      }
-      reader.readAsDataURL(file)
+      void insertImageAtCursor(file)
       break
     }
   }
@@ -189,22 +270,18 @@ function openFilePicker() {
 function onFileChange() {
   const file = fileInput.value?.files?.[0]
   if (!file) return
-  const reader = new FileReader()
-  reader.onload = () => {
-    insertImageAtCursor(reader.result as string)
-  }
-  reader.readAsDataURL(file)
+  void insertImageAtCursor(file)
   fileInput.value!.value = ''
 }
 
 function onCameraCapture(dataUrl: string) {
   camOpen.value = false
-  insertImageAtCursor(dataUrl)
+  void insertImageAtCursor(dataUrl)
 }
 
 function onScreenshotCapture(dataUrl: string) {
   screenshotOpen.value = false
-  insertImageAtCursor(dataUrl)
+  void insertImageAtCursor(dataUrl)
 }
 </script>
 
@@ -213,6 +290,7 @@ function onScreenshotCapture(dataUrl: string) {
   <div
     class="answer-panel flex-1 flex flex-col overflow-hidden overscroll-contain rounded-lg border group"
     :class="panelBg"
+    @mousedown="emit('activate-formatting', type)"
   >
     <div
       class="panel-label flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold border-b flex-shrink-0"
@@ -221,7 +299,18 @@ function onScreenshotCapture(dataUrl: string) {
       <span class="w-2 h-2 rounded-full" :class="dotClass" />
       {{ label }}
 
-      <!-- Image tools (top-right) -->
+      <button
+        v-if="layoutEditing"
+        class="ml-1 inline-flex touch-none cursor-grab items-center gap-1 rounded-md border border-current px-2 py-0.5 text-[10px] font-semibold opacity-70 transition-opacity hover:opacity-100 active:cursor-grabbing"
+        :title="`拖动${label}板块换位`"
+        :aria-label="`拖动${label}板块换位`"
+        @pointerdown.stop="emit('layout-drag-start', $event)"
+        @click.stop
+      >
+        ⠿ 拖动
+      </button>
+
+      <!-- Panel-specific image insertion tools -->
       <div v-if="!showHidden" class="ml-auto flex items-center gap-0.5">
         <button
           class="w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/5 transition-all active:scale-90"
@@ -292,12 +381,16 @@ function onScreenshotCapture(dataUrl: string) {
         <div
           ref="bodyRef"
           class="panel-body px-3.5 py-3 text-base leading-relaxed md-content outline-none text-gray-800 dark:text-gray-200 min-h-full"
+          :style="{ fontSize: fontSizeStyle }"
           :contenteditable="drawingEnabled ? 'false' : 'true'"
           :data-placeholder="'输入' + label + '…'"
           @input="onInput"
           @paste="onPaste"
           @dragover="onDragOver"
           @drop="onDrop"
+          @click="handleEditorClick"
+          @mouseup="captureSelection"
+          @keyup="captureSelection"
           @blur="emit('blur')"
         />
       </div>
@@ -305,13 +398,61 @@ function onScreenshotCapture(dataUrl: string) {
 
     <div
       v-else
-      class="flex-1 flex items-center justify-center cursor-pointer select-none rounded-b-lg transition-all duration-200 ease-out active:scale-[0.98]"
+      class="flex-1 flex items-center justify-center select-none transition-all duration-200 ease-out"
       :class="[hiddenBg, hiddenColor]"
-      @click="emit('reveal')"
     >
-      <span class="text-sm font-medium">点击显示{{ label }}</span>
+      <span class="text-sm font-medium">{{ label }}已隐藏</span>
+    </div>
+
+    <div class="flex shrink-0 justify-center border-t px-3 py-2" :class="[headerBg, headerBorder]">
+      <button
+        type="button"
+        class="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all active:scale-95"
+        :class="visibilityButtonClass"
+        :data-testid="isWrong ? 'wrong-answer-toggle' : 'correct-answer-toggle'"
+        :title="showHidden ? `显示${label}` : `隐藏${label}`"
+        @click="emit('reveal')"
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          aria-hidden="true"
+        >
+          <template v-if="showHidden">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+            <circle cx="12" cy="12" r="3" />
+          </template>
+          <template v-else>
+            <path
+              d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"
+            />
+            <line x1="1" y1="1" x2="23" y2="23" />
+          </template>
+        </svg>
+        {{ showHidden ? `显示${label}` : `隐藏${label}` }}
+      </button>
     </div>
   </div>
+
+  <Teleport v-if="formattingActive && !showHidden" to="#rich-text-formatting-toolbar">
+    <RichTextSizeControls
+      :image-selected="hasSelectedImage"
+      :image-width="imageWidth"
+      :font-size="fontSize"
+      :text-selected="hasTextSelection"
+      :bold="isBold"
+      @preserve-selection="captureSelection"
+      @font-size="applyFontSize"
+      @toggle-bold="toggleBold"
+      @highlight="applyHighlight"
+      @image-width="applyImageWidth"
+      @link="requestQuestionLink"
+    />
+  </Teleport>
 
   <CameraCapture v-if="camOpen" @capture="onCameraCapture" @close="camOpen = false" />
 
@@ -319,6 +460,17 @@ function onScreenshotCapture(dataUrl: string) {
     v-if="screenshotOpen"
     @capture="onScreenshotCapture"
     @close="screenshotOpen = false"
+  />
+
+  <QuestionLinkModal
+    :visible="showQuestionLinkModal"
+    :entries="entries"
+    :current-entry-id="entryId"
+    :linked-target-id="linkedTargetId"
+    @choose="chooseQuestionLink"
+    @open="openLinkedEntry"
+    @remove="unlinkQuestion"
+    @cancel="showQuestionLinkModal = false"
   />
 </template>
 

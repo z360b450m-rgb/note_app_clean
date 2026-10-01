@@ -1,9 +1,11 @@
-import type { NoteEntry, Notebook, ReviewLog } from '@/types'
+import type { NoteEntry, Notebook, QuestionGroup, ReviewLog } from '@/types'
 import type {
   EntryRepository,
   NotebookRepository,
+  QuestionGroupRepository,
   ReviewLogRepository,
 } from '@/services/repositories'
+import { toRemoteHtml } from '@/services/imageStorage'
 import { getAccessToken } from '@/services/auth'
 
 const API_BASE = 'http://localhost:8000/api'
@@ -16,6 +18,8 @@ interface SyncPayloadMap {
   delete_notebook: { notebookId: string }
   put_entry: { notebookId: string; entry: NoteEntry }
   delete_entry: { notebookId: string; entryId: string }
+  put_question_group: { notebookId: string; group: QuestionGroup }
+  delete_question_group: { notebookId: string; groupId: string }
   add_review_log: { notebookId: string; log: ReviewLog }
 }
 
@@ -60,6 +64,19 @@ interface ApiEntry {
   interval?: number
   last_review_date?: number
   next_review_date?: number
+  folder?: string | null
+  group_id?: string | null
+  sub_question_order?: number | null
+}
+
+interface ApiQuestionGroup {
+  id: string
+  notebook_id: string
+  title: string
+  material: string
+  drawings?: Record<string, string>
+  created_at: number
+  updated_at: number
 }
 
 class ApiError extends Error {
@@ -111,11 +128,19 @@ function syncItemId<Action extends SyncAction>(
   if (action === 'delete_entry') {
     return `entry:${(payload as SyncPayloadMap['delete_entry']).entryId}`
   }
+  if (action === 'put_question_group') {
+    return `question-group:${(payload as SyncPayloadMap['put_question_group']).group.id}`
+  }
+  if (action === 'delete_question_group') {
+    return `question-group:${(payload as SyncPayloadMap['delete_question_group']).groupId}`
+  }
   return `review:${(payload as SyncPayloadMap['add_review_log']).log.id}`
 }
 
 function queuedNotebookId(item: SyncItem): string {
-  return item.action === 'put_notebook' ? item.payload.id : item.payload.notebookId
+  if (item.action === 'put_notebook') return item.payload.id
+  if (item.action === 'put_question_group') return item.payload.notebookId
+  return item.payload.notebookId
 }
 
 function queuedEntryId(item: SyncItem): string | undefined {
@@ -241,15 +266,26 @@ async function deleteNotebookRemote(notebookId: string): Promise<void> {
 }
 
 async function putEntryRemote(notebookId: string, entry: NoteEntry): Promise<void> {
+  const [question, wrongAnswer, correctAnswer] = await Promise.all([
+    toRemoteHtml(entry.question),
+    toRemoteHtml(entry.wrongAnswer),
+    toRemoteHtml(entry.correctAnswer),
+  ])
   const updateResponse = await fetchWithTimeout(
     `${API_BASE}/entries/${encodeURIComponent(entry.id)}`,
     jsonRequest('PATCH', {
       title: entry.title,
-      question: entry.question,
-      wrong_answer: entry.wrongAnswer,
-      correct_answer: entry.correctAnswer,
+      question,
+      wrong_answer: wrongAnswer,
+      correct_answer: correctAnswer,
       subject: entry.subject,
+      source: entry.source,
       tags: entry.tags,
+      drawings: entry.drawings,
+      sort_order: entry.sortOrder,
+      folder: entry.folder,
+      group_id: entry.groupId,
+      sub_question_order: entry.subQuestionOrder,
       mastery_level: entry.masteryLevel,
       next_review_date: entry.nextReviewDate,
     }),
@@ -263,11 +299,17 @@ async function putEntryRemote(notebookId: string, entry: NoteEntry): Promise<voi
         id: entry.id,
         notebook_id: notebookId,
         title: entry.title,
-        question: entry.question,
-        correct_answer: entry.correctAnswer,
-        wrong_answer: entry.wrongAnswer,
+        question,
+        correct_answer: correctAnswer,
+        wrong_answer: wrongAnswer,
         subject: entry.subject,
+        source: entry.source,
         tags: entry.tags,
+        drawings: entry.drawings,
+        sort_order: entry.sortOrder,
+        folder: entry.folder,
+        group_id: entry.groupId,
+        sub_question_order: entry.subQuestionOrder,
       }),
     )
   }
@@ -276,6 +318,35 @@ async function putEntryRemote(notebookId: string, entry: NoteEntry): Promise<voi
 async function deleteEntryRemote(entryId: string): Promise<void> {
   await fetchWithTimeout(
     `${API_BASE}/entries/${encodeURIComponent(entryId)}`,
+    { method: 'DELETE' },
+    [404],
+  )
+}
+
+async function putQuestionGroupRemote(group: QuestionGroup): Promise<void> {
+  const material = await toRemoteHtml(group.material)
+  const updateResponse = await fetchWithTimeout(
+    `${API_BASE}/question-groups/${encodeURIComponent(group.id)}`,
+    jsonRequest('PATCH', { title: group.title, material, drawings: group.drawings }),
+    [404],
+  )
+  if (updateResponse.status === 404) {
+    await fetchWithTimeout(
+      `${API_BASE}/question-groups`,
+      jsonRequest('POST', {
+        id: group.id,
+        notebook_id: group.notebookId,
+        title: group.title,
+        material,
+        drawings: group.drawings,
+      }),
+    )
+  }
+}
+
+async function deleteQuestionGroupRemote(groupId: string): Promise<void> {
+  await fetchWithTimeout(
+    `${API_BASE}/question-groups/${encodeURIComponent(groupId)}`,
     { method: 'DELETE' },
     [404],
   )
@@ -303,6 +374,10 @@ async function syncItem(item: SyncItem): Promise<void> {
     await putEntryRemote(item.payload.notebookId, item.payload.entry)
   } else if (item.action === 'delete_entry') {
     await deleteEntryRemote(item.payload.entryId)
+  } else if (item.action === 'put_question_group') {
+    await putQuestionGroupRemote(item.payload.group)
+  } else if (item.action === 'delete_question_group') {
+    await deleteQuestionGroupRemote(item.payload.groupId)
   } else {
     await addReviewLogRemote(item.payload.log)
   }
@@ -396,6 +471,9 @@ function mapEntry(item: ApiEntry): NoteEntry {
     interval: item.interval,
     lastReviewDate: item.last_review_date,
     nextReviewDate: item.next_review_date,
+    folder: item.folder || undefined,
+    groupId: item.group_id || undefined,
+    subQuestionOrder: item.sub_question_order ?? undefined,
   }
 }
 
@@ -518,6 +596,73 @@ export const smartEntryRepository = (fallback: EntryRepository): EntryRepository
   getAllSnapshots: (notebookId) => fallback.getAllSnapshots(notebookId),
   deleteSnapshot: (notebookId, entryId) => fallback.deleteSnapshot(notebookId, entryId),
   deleteAllSnapshots: (notebookId) => fallback.deleteAllSnapshots(notebookId),
+})
+
+function mapQuestionGroup(item: ApiQuestionGroup): QuestionGroup {
+  return {
+    id: item.id,
+    notebookId: item.notebook_id,
+    title: item.title,
+    material: item.material,
+    drawings: item.drawings || {},
+    createdAt: item.created_at,
+    updatedAt: item.updated_at,
+  }
+}
+
+export const smartQuestionGroupRepository = (
+  fallback: QuestionGroupRepository,
+): QuestionGroupRepository => ({
+  async getAll(notebookId: string): Promise<QuestionGroup[]> {
+    const localList = await fallback.getAll(notebookId)
+    try {
+      await flushPendingQueue()
+      if (getPendingQueue().length > 0) return fallback.getAll(notebookId)
+      const response = await fetchWithTimeout(
+        `${API_BASE}/question-groups?notebook_id=${encodeURIComponent(notebookId)}`,
+      )
+      const data = (await response.json()) as { items?: ApiQuestionGroup[] }
+      const remoteList = (data.items || []).map(mapQuestionGroup)
+      const remoteById = new Map(remoteList.map((group) => [group.id, group]))
+      const mergedById = new Map(remoteById)
+      for (const localGroup of localList) {
+        const remoteGroup = remoteById.get(localGroup.id)
+        if (!remoteGroup || localGroup.updatedAt > remoteGroup.updatedAt) {
+          mergedById.set(localGroup.id, localGroup)
+          enqueueSync('put_question_group', { notebookId, group: localGroup })
+        }
+      }
+      await Promise.all(
+        remoteList
+          .filter((group) => {
+            const local = localList.find((candidate) => candidate.id === group.id)
+            return !local || group.updatedAt > local.updatedAt
+          })
+          .map((group) => fallback.put(notebookId, group)),
+      )
+      await flushPendingQueue()
+      return [...mergedById.values()]
+    } catch {
+      return localList
+    }
+  },
+
+  async get(notebookId: string, groupId: string): Promise<QuestionGroup | undefined> {
+    const list = await this.getAll(notebookId)
+    return list.find((group) => group.id === groupId) ?? fallback.get(notebookId, groupId)
+  },
+
+  async put(notebookId: string, group: QuestionGroup): Promise<void> {
+    await fallback.put(notebookId, group)
+    enqueueSync('put_question_group', { notebookId, group })
+    void flushPendingQueue()
+  },
+
+  async delete(notebookId: string, groupId: string): Promise<void> {
+    await fallback.delete(notebookId, groupId)
+    enqueueSync('delete_question_group', { notebookId, groupId })
+    void flushPendingQueue()
+  },
 })
 
 // ---------------------------------------------------------------------------

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // @AI-NOTE: 工作区布局组件 —— 仅编排子组件布局。数据通过 props/events
 // 委托给 App.vue, 禁止直接操作存储或编写业务逻辑。
-import { ref } from 'vue'
-import type { NoteEntry } from '@/types'
+import { computed, ref } from 'vue'
+import type { NoteEntry, QuestionGroup } from '@/types'
 import type { SortKey, SortDir } from '@/composables/useFilter'
 import type { StatsState } from '@/composables/useStats'
 import type { ReviewOutcome, SessionRecord } from '@/composables/useReview'
@@ -11,6 +11,7 @@ import { PEN_COLORS } from '@/composables/useDrawing'
 import AppSidebar from './AppSidebar.vue'
 import AppToolbar from './AppToolbar.vue'
 import NoteEditor from './NoteEditor.vue'
+// import AiChatSidebar from './AiChatSidebar.vue'
 import ReviewPanel from './ReviewPanel.vue'
 import DeleteModal from './DeleteModal.vue'
 import StatsPanel from './StatsPanel.vue'
@@ -19,9 +20,12 @@ import UnsavedModal from './UnsavedModal.vue'
 const props = defineProps<{
   notebookName: string
   entries: NoteEntry[]
+  questionGroups: QuestionGroup[]
   filteredEntries: NoteEntry[]
   activeId: string | null
   activeEntry: NoteEntry | null | undefined
+  activeGroup: QuestionGroup | null | undefined
+  activeGroupEntries: NoteEntry[]
   answersHidden: boolean
   isDirty: boolean
   selectedIds: Set<string>
@@ -29,6 +33,7 @@ const props = defineProps<{
   subjectMap: Record<string, number>
   tagMap: Record<string, number>
   sourceMap: Record<string, number>
+  folderMap: Record<string, number>
   masteryMap: Record<string, number>
   dueCount: number
   mode: 'edit' | 'review'
@@ -49,6 +54,7 @@ const props = defineProps<{
   showDeleteModal: boolean
   showBatchDeleteConfirm: boolean
   showUnsavedModal: boolean
+  requireSaveBeforeClose: boolean
   statsOpen: boolean
   settingsOpen: boolean
   stats: StatsState
@@ -66,10 +72,12 @@ const props = defineProps<{
   activeSubject: string
   activeTag: string | null
   activeSource: string | null
+  activeFolder: string | null
   activeMastery: string
   allSubjects: string[]
   allTags: string[]
   allSources: string[]
+  allFolders: string[]
   installedPluginIds: string[]
   availablePlugins: NotebookPluginManifest[]
 }>()
@@ -85,6 +93,7 @@ const emit = defineEmits<{
   'filter-subject': [subject: string]
   'filter-tag': [tag: string | null]
   'filter-source': [source: string | null]
+  'filter-folder': [folder: string | null]
   'filter-mastery': [label: string]
   'filter-search': [query: string]
 
@@ -94,6 +103,8 @@ const emit = defineEmits<{
 
   // Entry actions
   'quick-create': [subject: string]
+  'enable-question-group': []
+  'add-sub-question': []
   rename: [id: string, newTitle: string]
   save: []
   'mark-dirty': []
@@ -143,6 +154,10 @@ const emit = defineEmits<{
   'delete-tag': [name: string]
   'rename-source': [oldName: string, newName: string]
   'delete-source': [name: string]
+  'add-folder': [name: string]
+  'rename-folder': [oldName: string, newName: string]
+  'delete-folder': [name: string]
+  'move-selected-to-folder': [folder?: string]
   'batch-tag': [tags: string[]]
   'batch-export': []
 
@@ -170,6 +185,10 @@ const emit = defineEmits<{
 }>()
 
 const mainArea = ref<HTMLElement | null>(null)
+const reviewGroup = computed(() => {
+  const groupId = props.currentCard?.groupId
+  return groupId ? props.questionGroups.find((group) => group.id === groupId) : undefined
+})
 let lastWheelNav = 0
 let lastEdgeTime = 0
 
@@ -215,10 +234,11 @@ function onWheel(e: WheelEvent) {
 
 <template>
   <!-- @AI-VIEW: DOM 可自由重构。样式仅限 Tailwind CSS 工具类。严禁内联 style 或自定义 CSS。 -->
-  <div class="flex h-screen bg-white dark:bg-[#141413]">
+  <div class="workspace-ui flex h-screen bg-white dark:bg-[#141413]">
     <AppSidebar
       :notebook-name="notebookName"
       :entries="entries"
+      :question-groups="questionGroups"
       :filtered-entries="filteredEntries"
       :active-id="activeId"
       :active-subject="activeSubject"
@@ -236,8 +256,11 @@ function onWheel(e: WheelEvent) {
       :all-subjects="allSubjects"
       :all-tags="allTags"
       :all-sources="allSources"
+      :all-folders="allFolders"
       :active-source="activeSource"
       :source-map="sourceMap"
+      :active-folder="activeFolder"
+      :folder-map="folderMap"
       :installed-plugin-ids="installedPluginIds"
       :available-plugins="availablePlugins"
       @return-to-menu="emit('return-to-menu')"
@@ -245,6 +268,7 @@ function onWheel(e: WheelEvent) {
       @filter-subject="(s) => emit('filter-subject', s)"
       @filter-tag="(t) => emit('filter-tag', t)"
       @filter-source="(s) => emit('filter-source', s)"
+      @filter-folder="(folder) => emit('filter-folder', folder)"
       @filter-mastery="(l) => emit('filter-mastery', l)"
       @quick-create="(s) => emit('quick-create', s)"
       @rename="(id, title) => emit('rename', id, title)"
@@ -264,6 +288,10 @@ function onWheel(e: WheelEvent) {
       @delete-tag="(name) => emit('delete-tag', name)"
       @rename-source="(oldName, newName) => emit('rename-source', oldName, newName)"
       @delete-source="(name) => emit('delete-source', name)"
+      @add-folder="(name) => emit('add-folder', name)"
+      @rename-folder="(oldName, newName) => emit('rename-folder', oldName, newName)"
+      @delete-folder="(name) => emit('delete-folder', name)"
+      @move-selected-to-folder="(folder) => emit('move-selected-to-folder', folder)"
       @batch-delete="emit('batch-delete')"
       @batch-tag="(tags) => emit('batch-tag', tags)"
       @batch-export="emit('batch-export')"
@@ -275,7 +303,6 @@ function onWheel(e: WheelEvent) {
     <main class="flex-1 flex flex-col min-w-0">
       <AppToolbar
         :active-id="activeId"
-        :answers-hidden="answersHidden"
         :can-go-prev="canGoPrev"
         :can-go-next="canGoNext"
         :search-query="searchQuery"
@@ -287,7 +314,6 @@ function onWheel(e: WheelEvent) {
         :is-dirty="isDirty"
         @new="emit('quick-create', '')"
         @save="emit('save')"
-        @reveal="emit('reveal')"
         @delete="emit('delete')"
         @prev="emit('prev')"
         @next="emit('next')"
@@ -307,21 +333,30 @@ function onWheel(e: WheelEvent) {
           <NoteEditor
             class="flex-1 min-w-0"
             :entry="activeEntry"
+            :group="activeGroup"
+            :group-entries="activeGroupEntries"
+            :entries="entries"
             :answers-hidden="answersHidden"
             :all-subjects="allSubjects"
             :all-tags="allTags"
             :all-sources="allSources"
             @update="emit('mark-dirty')"
+            @enable-question-group="emit('enable-question-group')"
+            @add-sub-question="emit('add-sub-question')"
+            @select-sub-question="(id) => emit('select', id)"
+            @open-entry="(id) => emit('select', id)"
             @blur-save="emit('blur-save')"
             @reveal="emit('reveal')"
             @mount-canvas="(el, entryId, field) => emit('mount-canvas', el, entryId, field)"
             @add-tag="(name, global) => emit('add-tag', name, global)"
           />
+          <!-- <AiChatSidebar :entry="activeEntry" /> -->
         </div>
 
         <ReviewPanel
           v-else-if="mode === 'review'"
           :entry="currentCard!"
+          :group="reviewGroup"
           :answered="answered"
           :elapsed-ms="elapsedMs"
           :progress="progress"
@@ -375,6 +410,15 @@ function onWheel(e: WheelEvent) {
         v-if="drawingEnabled"
         class="fixed bottom-6 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 bg-white/90 dark:bg-[#141413]/90 backdrop-blur-sm rounded-xl shadow-lg border border-gray-100 dark:border-[#2e2e2c] px-2.5 py-2"
       >
+        <span
+          v-if="mode === 'review'"
+          data-testid="review-drawing-temporary"
+          class="whitespace-nowrap rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-700 dark:bg-amber-500/10 dark:text-amber-300"
+          title="复习模式中的画笔内容在切题或退出后自动丢弃"
+        >
+          临时笔迹 · 不保存
+        </span>
+        <div v-if="mode === 'review'" class="h-4 w-px bg-gray-200 dark:bg-[#2e2e2c]" />
         <button
           class="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ease-out active:scale-95"
           :class="
@@ -581,6 +625,7 @@ function onWheel(e: WheelEvent) {
 
     <UnsavedModal
       :visible="showUnsavedModal"
+      :require-save="requireSaveBeforeClose"
       @save="emit('save-and-proceed')"
       @discard="emit('discard-and-proceed')"
       @cancel="emit('cancel-proceed')"

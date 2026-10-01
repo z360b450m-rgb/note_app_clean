@@ -33,14 +33,17 @@ import AuthScreen from './components/AuthScreen.vue'
 import { clearSession, fetchCurrentUser, getStoredUser, type AuthUser } from './services/auth'
 
 const currentUser = ref<AuthUser | null>(getStoredUser())
+let appInitialized = false
 
 function handleAuthenticated(user: AuthUser) {
   currentUser.value = user
+  void initializeApp()
 }
 
 function handleLogout() {
   clearSession()
   currentUser.value = null
+  appInitialized = false
 }
 
 const {
@@ -56,8 +59,11 @@ const showNotebookMenu = ref(true)
 
 const {
   entries,
+  questionGroups,
   activeId,
   activeEntry,
+  activeGroup,
+  activeGroupEntries,
   answersHidden,
   isDirty,
   selectedIds,
@@ -65,6 +71,8 @@ const {
   loadEntries,
   checkCrashRecovery,
   createEntry,
+  enableQuestionGroup,
+  addSubQuestion,
   loadEntry,
   markDirty,
   saveEntry,
@@ -86,6 +94,7 @@ const {
   batchDelete,
   batchTag,
   batchExport,
+  moveEntriesToFolder,
   notebookEntries,
   // entity rename/delete
   renameSubjectInEntries,
@@ -94,12 +103,15 @@ const {
   removeSubjectFromEntries,
   removeTagFromEntries,
   removeSourceFromEntries,
+  renameFolderInEntries,
+  removeFolderFromEntries,
 } = useEntries(() => activeNotebookId.value ?? '')
 
 const {
   activeSubject,
   activeTag,
   activeSource,
+  activeFolder,
   activeMastery,
   searchQuery,
   sortKey,
@@ -108,19 +120,22 @@ const {
   subjectMap,
   tagMap,
   sourceMap,
+  folderMap,
   masteryMap,
   setSubject,
   setTag,
   setSource,
+  setFolder,
   setMastery,
   setSearch,
   setSort,
-} = useFilter(notebookEntries)
+} = useFilter(notebookEntries, questionGroups)
 
 const {
   allSubjects,
   allTags,
   allSources,
+  allFolders,
   addSubject,
   removeSubject,
   renameSubject,
@@ -130,6 +145,9 @@ const {
   addSource,
   removeSource,
   renameSource,
+  addFolder,
+  removeFolder,
+  renameFolder,
 } = useMetaStore(notebookEntries, () => activeNotebookId.value ?? '')
 
 const {
@@ -177,9 +195,16 @@ const {
   loadDrawing,
   mountCanvas,
   setCanvasParent,
-  captureAllDrawings,
+  consumeAllDrawings,
   setStoredDrawing,
-} = useDrawing(markDirty)
+  resetDrawingSession,
+} = useDrawing(() => {
+  if (mode.value === 'edit') markDirty()
+})
+
+// Review-mode drawings are scratch work by default. Reset the canvas session
+// at each mode boundary so temporary review marks can never leak into entries.
+watch(mode, resetDrawingSession, { flush: 'sync' })
 
 const { exportPDF } = useExport(showToast)
 const { isDark, toggleDark } = useDarkMode()
@@ -192,7 +217,7 @@ const isElectron = computed(() => typeof window !== 'undefined' && !!window.elec
 // Unsaved changes flow
 const showUnsavedModal = ref(false)
 const pendingEntryId = ref<string | null>(null)
-const pendingAction = ref<'select' | 'create' | 'review' | null>(null)
+const pendingAction = ref<'select' | 'create' | 'review' | 'close' | null>(null)
 const pendingSubject = ref<string>('')
 
 const {
@@ -239,6 +264,7 @@ const {
   handleCancelPdfReview,
 } = useImportFeature({
   entries: notebookEntries,
+  questionGroups,
   activeNotebookId,
   loadEntries,
   loadNotebooks,
@@ -304,16 +330,9 @@ function handleReturnToMenu() {
   resetPluginLaunch()
 }
 
-onMounted(async () => {
-  if (currentUser.value) {
-    try {
-      currentUser.value = await fetchCurrentUser()
-    } catch {
-      handleLogout()
-      return
-    }
-  }
-
+async function initializeApp() {
+  if (appInitialized) return
+  appInitialized = true
   await loadNotebooks()
 
   // Migrate from IndexedDB to file storage on first launch in Electron
@@ -340,15 +359,52 @@ onMounted(async () => {
     await loadLogs()
     await loadInstalledPlugins(lastId)
   }
+}
+
+onMounted(async () => {
+  if (!currentUser.value) return
+  try {
+    currentUser.value = await fetchCurrentUser()
+  } catch {
+    handleLogout()
+    return
+  }
+  await initializeApp()
 })
 
-// Crash protection: save snapshot before unload
-function onBeforeUnload() {
+// Crash protection plus a native fallback for browser reload/close.
+function onBeforeUnload(event: BeforeUnloadEvent) {
   syncDrawingToEntry()
   snapshotSave()
+  if (isDirty.value) {
+    event.preventDefault()
+    event.returnValue = ''
+  }
 }
 onMounted(() => window.addEventListener('beforeunload', onBeforeUnload))
 onUnmounted(() => window.removeEventListener('beforeunload', onBeforeUnload))
+
+let removeCloseRequestedListener: (() => void) | undefined
+
+function confirmDesktopClose() {
+  return window.electronAPI?.confirmClose()
+}
+
+function handleDesktopCloseRequest() {
+  if (!isDirty.value) {
+    void confirmDesktopClose()
+    return
+  }
+  pendingEntryId.value = null
+  pendingSubject.value = ''
+  pendingAction.value = 'close'
+  showUnsavedModal.value = true
+}
+
+onMounted(() => {
+  removeCloseRequestedListener = window.electronAPI?.onCloseRequested(handleDesktopCloseRequest)
+})
+onUnmounted(() => removeCloseRequestedListener?.())
 
 provide('toast', showToast)
 provide('setCanvasParent', setCanvasParent)
@@ -406,11 +462,25 @@ function checkDirtyThen(action: () => void, nextAction: 'select' | 'create' | 'r
 
 function handleCreate(subject?: string) {
   pendingSubject.value = subject || ''
-  checkDirtyThen(() => createEntry(subject), 'create')
+  const folder =
+    activeFolder.value && activeFolder.value !== '__none__' ? activeFolder.value : undefined
+  checkDirtyThen(() => createEntry(subject, folder), 'create')
 }
 
 function doCreate() {
-  createEntry(pendingSubject.value || undefined)
+  const folder =
+    activeFolder.value && activeFolder.value !== '__none__' ? activeFolder.value : undefined
+  createEntry(pendingSubject.value || undefined, folder)
+}
+
+async function handleEnableQuestionGroup() {
+  if (isDirty.value && !(await handleSave())) return
+  await enableQuestionGroup()
+}
+
+async function handleAddSubQuestion() {
+  if (isDirty.value && !(await handleSave())) return
+  await addSubQuestion()
 }
 
 function handleDelete() {
@@ -523,6 +593,48 @@ async function handleDeleteSource(name: string) {
   showToast(`来源 "${name}" 已删除`)
 }
 
+function handleAddFolder(name: string) {
+  addFolder(name)
+  setFolder(name)
+  showToast(`文件夹 "${name}" 已创建`)
+}
+
+async function handleRenameFolder(oldName: string, newName: string) {
+  try {
+    await renameFolderInEntries(oldName, newName)
+    renameFolder(oldName, newName)
+    if (activeFolder.value === oldName) activeFolder.value = newName
+    showToast(`文件夹已重命名为 "${newName}"`)
+  } catch (err) {
+    console.error('Rename folder failed:', err)
+    showToast('重命名失败，请重试')
+  }
+}
+
+async function handleDeleteFolder(name: string) {
+  try {
+    await removeFolderFromEntries(name)
+    removeFolder(name)
+    if (activeFolder.value === name) activeFolder.value = '__none__'
+    showToast(`文件夹 "${name}" 已删除，题目已移到未归档`)
+  } catch (err) {
+    console.error('Delete folder failed:', err)
+    showToast('删除失败，请重试')
+  }
+}
+
+async function handleMoveSelectedToFolder(folder?: string) {
+  if (selectedIds.value.size === 0) return
+  const count = selectedIds.value.size
+  try {
+    await moveEntriesToFolder([...selectedIds.value], folder)
+    showToast(folder ? `已将 ${count} 道错题移入 "${folder}"` : `已将 ${count} 道错题移到未归档`)
+  } catch (err) {
+    console.error('Move entries to folder failed:', err)
+    showToast('移动失败，请重试')
+  }
+}
+
 function handleExportPDF() {
   exportPDF(notebookEntries.value)
 }
@@ -549,13 +661,21 @@ function handleSelectEntry(id: string) {
 }
 
 function handleMountCanvas(el: HTMLElement, entryId: string, field: string) {
-  // Sync previous entry's drawings before switching
-  if (currentEntryId.value && currentEntryId.value !== entryId) {
+  // Consume modified canvases before replacing any mounted field. Canvas
+  // remounts can also happen within the same entry when panels are revealed.
+  if (mode.value === 'edit' && currentEntryId.value) {
     const oldEntry = entries.value.find((e) => e.id === currentEntryId.value)
     if (oldEntry) {
-      const all = captureAllDrawings()
-      if (Object.keys(all).length > 0) {
-        oldEntry.drawings = { ...oldEntry.drawings, ...all }
+      const all = consumeAllDrawings()
+      const { material, ...entryDrawings } = all
+      if (Object.keys(entryDrawings).length > 0) {
+        oldEntry.drawings = { ...oldEntry.drawings, ...entryDrawings }
+      }
+      const oldGroup = oldEntry.groupId
+        ? questionGroups.value.find((group) => group.id === oldEntry.groupId)
+        : undefined
+      if (material && oldGroup) {
+        oldGroup.drawings = { ...oldGroup.drawings, material }
       }
     }
   }
@@ -569,6 +689,11 @@ function handleMountCanvas(el: HTMLElement, entryId: string, field: string) {
       setStoredDrawing(entryId, key, url)
     }
   }
+  if (field === 'material' && entry?.groupId) {
+    const group = questionGroups.value.find((item) => item.id === entry.groupId)
+    const materialDrawing = group?.drawings?.material
+    if (materialDrawing) setStoredDrawing(entryId, 'material', materialDrawing)
+  }
   // Migrate legacy drawing field
   const legacy = entry as NoteEntry & { drawing?: string }
   if (legacy.drawing && !entry.drawings) {
@@ -579,28 +704,37 @@ function handleMountCanvas(el: HTMLElement, entryId: string, field: string) {
 }
 
 function syncDrawingToEntry() {
+  if (mode.value === 'review') return
   if (!activeId.value) return
   const entry = entries.value.find((e) => e.id === activeId.value)
   if (!entry) return
   try {
-    const all = captureAllDrawings()
-    if (Object.keys(all).length > 0) {
-      entry.drawings = { ...entry.drawings, ...all }
+    const all = consumeAllDrawings()
+    const { material, ...entryDrawings } = all
+    if (Object.keys(entryDrawings).length > 0) {
+      entry.drawings = { ...entry.drawings, ...entryDrawings }
     } else if (!entry.drawings || Object.keys(entry.drawings).length === 0) {
       delete entry.drawings
+    }
+    if (material && entry.groupId) {
+      const group = questionGroups.value.find((item) => item.id === entry.groupId)
+      if (group) group.drawings = { ...group.drawings, material }
     }
   } catch (err) {
     console.error('syncDrawingToEntry failed', err)
   }
 }
 
-async function handleSave() {
+async function handleSave(): Promise<boolean> {
   syncDrawingToEntry()
   try {
-    await saveEntry()
+    const saved = await saveEntry()
+    if (!saved) showToast('保存失败，请重试')
+    return saved
   } catch (err) {
     console.error('handleSave failed', err)
     showToast('保存失败，请重试')
+    return false
   }
 }
 
@@ -615,13 +749,21 @@ function handleExitReview() {
 
 // Unsaved modal handlers
 async function handleSaveAndProceed() {
-  await handleSave()
-  proceedAfterSave()
+  if (await handleSave()) proceedAfterSave()
 }
 
-function handleDiscardAndProceed() {
-  discardChanges()
-  proceedAfterSave()
+async function handleDiscardAndProceed() {
+  try {
+    await discardChanges()
+    // Discard means both the persisted model and the in-memory canvas session.
+    // Clear it before mounting the next entry so stale strokes cannot be synced
+    // back into the entry that was just restored from storage.
+    resetDrawingSession()
+    proceedAfterSave()
+  } catch (err) {
+    console.error('discardChanges failed', err)
+    showToast('放弃修改失败，请重试')
+  }
 }
 
 function handleCancelProceed() {
@@ -642,6 +784,8 @@ function proceedAfterSave() {
     doCreate()
   } else if (action === 'review') {
     doStartReview()
+  } else if (action === 'close') {
+    void confirmDesktopClose()
   }
 }
 
@@ -663,7 +807,7 @@ watch(activeId, (_newId) => {
   <!-- @AI-VIEW: DOM 可自由重构。样式仅限 Tailwind CSS 工具类。严禁内联 style 或自定义 CSS。 -->
   <AuthScreen v-if="!currentUser" @authenticated="handleAuthenticated" />
   <template v-else>
-    <Transition name="page">
+  <Transition name="page">
     <NotebookMenu
       v-if="showNotebookMenu"
       key="menu"
@@ -675,9 +819,12 @@ watch(activeId, (_newId) => {
       key="workspace"
       :notebook-name="activeNotebook?.name ?? ''"
       :entries="notebookEntries"
+      :question-groups="questionGroups"
       :filtered-entries="filteredEntries"
       :active-id="activeId"
       :active-entry="activeEntry"
+      :active-group="activeGroup"
+      :active-group-entries="activeGroupEntries"
       :answers-hidden="answersHidden"
       :is-dirty="isDirty"
       :selected-ids="selectedIds"
@@ -687,6 +834,7 @@ watch(activeId, (_newId) => {
       :all-subjects="allSubjects"
       :all-tags="allTags"
       :all-sources="allSources"
+      :all-folders="allFolders"
       :mastery-map="masteryMap"
       :due-count="dueCount"
       :mode="mode"
@@ -707,6 +855,7 @@ watch(activeId, (_newId) => {
       :show-delete-modal="showDeleteModal"
       :show-batch-delete-confirm="showBatchDeleteConfirm"
       :show-unsaved-modal="showUnsavedModal"
+      :require-save-before-close="pendingAction === 'close'"
       :stats-open="statsOpen"
       :settings-open="settingsOpen"
       :is-electron="isElectron"
@@ -723,8 +872,10 @@ watch(activeId, (_newId) => {
       :active-subject="activeSubject"
       :active-tag="activeTag"
       :active-source="activeSource"
+      :active-folder="activeFolder"
       :active-mastery="activeMastery"
       :source-map="sourceMap"
+      :folder-map="folderMap"
       :installed-plugin-ids="installedPluginIds"
       :available-plugins="notebookPlugins"
       :stats="stats"
@@ -733,11 +884,14 @@ watch(activeId, (_newId) => {
       @filter-subject="setSubject"
       @filter-tag="setTag"
       @filter-source="setSource"
+      @filter-folder="setFolder"
       @filter-mastery="setMastery"
       @filter-search="setSearch"
       @set-sort="(key: SortKey, dir?: SortDir) => setSort(key, dir)"
       @reorder="reorderEntries"
       @quick-create="handleCreate"
+      @enable-question-group="handleEnableQuestionGroup"
+      @add-sub-question="handleAddSubQuestion"
       @rename="updateEntryTitle"
       @save="handleSave"
       @mark-dirty="markDirty"
@@ -781,6 +935,10 @@ watch(activeId, (_newId) => {
       @delete-tag="handleDeleteTag"
       @rename-source="handleRenameSource"
       @delete-source="handleDeleteSource"
+      @add-folder="handleAddFolder"
+      @rename-folder="handleRenameFolder"
+      @delete-folder="handleDeleteFolder"
+      @move-selected-to-folder="handleMoveSelectedToFolder"
       @batch-tag="handleBatchTag"
       @batch-export="handleBatchExport"
       @export-json="exportData"
@@ -1176,6 +1334,6 @@ watch(activeId, (_newId) => {
     @install="installPlugin"
     @uninstall="uninstallPlugin"
   />
-    <AppToast :message="toastMsg" />
+  <AppToast :message="toastMsg" />
   </template>
 </template>

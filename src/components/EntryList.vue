@@ -2,12 +2,13 @@
 // @AI-NOTE: 条目列表组件 —— 条目展示/选择/排序由 useFilter/useEntries
 // Hook 驱动。禁止在此实现筛选/排序逻辑或直接操作存储。
 import { ref, nextTick, computed, onUnmounted } from 'vue'
-import type { NoteEntry } from '@/types'
+import type { NoteEntry, QuestionGroup } from '@/types'
 import type { SortKey } from '@/composables/useFilter'
 import { getMasteryColor } from '@/composables/useStats'
 
 const props = defineProps<{
   entries: NoteEntry[]
+  questionGroups: QuestionGroup[]
   activeId: string | null
   sortKey: SortKey
   selectedIds: Set<string>
@@ -22,6 +23,14 @@ const emit = defineEmits<{
 }>()
 
 const isCustomSort = computed(() => props.sortKey === 'custom')
+const questionGroupNumbers = computed(
+  () =>
+    new Map(
+      [...props.questionGroups]
+        .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+        .map((group, index) => [group.id, index + 1]),
+    ),
+)
 const dragId = ref<string | null>(null)
 const dragOverId = ref<string | null>(null)
 
@@ -85,6 +94,13 @@ function preview(s: string, max: number): string {
 
 function masteryColor(entry: NoteEntry): string {
   return getMasteryColor(entry)
+}
+
+function questionNumber(entry: NoteEntry): string {
+  if (!entry.groupId) return ''
+  const groupNumber = questionGroupNumbers.value.get(entry.groupId)
+  if (!groupNumber) return ''
+  return `${groupNumber}.(${(entry.subQuestionOrder ?? 0) + 1})`
 }
 
 function formatDate(ts: number): string {
@@ -230,6 +246,9 @@ onUnmounted(() => {
   <div
     v-for="(entry, idx) in entries"
     :key="entry.id"
+    data-testid="entry-item"
+    :data-entry-id="entry.id"
+    :data-active="entry.id === activeId ? 'true' : 'false'"
     class="entry-item flex items-center gap-1 mx-2 mb-0.5 px-2.5 py-2.5 cursor-pointer transition-all duration-200 border-l-[3px] select-none rounded-lg"
     :class="{
       '!bg-accent-light dark:!bg-accent/20 !border-l-accent shadow-md ring-1 ring-accent/15':
@@ -333,6 +352,12 @@ onUnmounted(() => {
           class="px-1.5 py-px rounded-sm bg-gray-100 dark:bg-[#1e1e1c] text-[10px]"
         >
           {{ entry.subject }}
+        </span>
+        <span
+          v-if="questionNumber(entry)"
+          class="px-1.5 py-px rounded-sm bg-sky-50 dark:bg-sky-500/10 text-sky-500 text-[10px]"
+        >
+          {{ questionNumber(entry) }}
         </span>
         <span>{{ formatDate(entry.updatedAt) }}</span>
         <span v-if="entry.source" class="opacity-60">{{ entry.source }}</span>

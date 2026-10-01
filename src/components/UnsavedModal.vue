@@ -5,6 +5,7 @@ import { useModalAnimations } from '@/composables/useModalAnimations'
 
 defineProps<{
   visible: boolean
+  requireSave?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -45,9 +46,15 @@ const { enterModal, leaveModal } = useModalAnimations()
             </svg>
           </div>
           <div>
-            <h3 class="text-[15px] font-bold text-gray-800 dark:text-brand-light">未保存的更改</h3>
+            <h3 class="text-[15px] font-bold text-gray-800 dark:text-brand-light">
+              {{ requireSave ? '保存后关闭' : '未保存的更改' }}
+            </h3>
             <p class="text-[12px] text-gray-500 dark:text-brand-mid mt-0.5">
-              当前错题有未保存的修改，是否保存？
+              {{
+                requireSave
+                  ? '当前错题有未保存的修改，保存后才能关闭。'
+                  : '当前错题有未保存的修改，是否保存？'
+              }}
             </p>
           </div>
         </div>
@@ -60,6 +67,7 @@ const { enterModal, leaveModal } = useModalAnimations()
             取消
           </button>
           <button
+            v-if="!requireSave"
             class="px-4 py-2 rounded-lg text-[13px] font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-900 dark:bg-red-950/50 transition-all duration-200 ease-out active:scale-95"
             @click="emit('discard')"
           >
@@ -69,7 +77,7 @@ const { enterModal, leaveModal } = useModalAnimations()
             class="px-4 py-2 rounded-lg text-[13px] font-medium bg-accent text-white hover:brightness-110 transition-all"
             @click="emit('save')"
           >
-            保存
+            {{ requireSave ? '保存并关闭' : '保存' }}
           </button>
         </div>
       </div>

@@ -15,7 +15,7 @@ DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYS
 
 engine = create_engine(
     DATABASE_URL,
-    echo=True,
+    echo=False,
     pool_size=10,
     max_overflow=20,
     pool_recycle=3600

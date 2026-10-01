@@ -1,7 +1,12 @@
+from dotenv import load_dotenv
+
 from deepagents import create_deep_agent
-from langchain_openai import ChatOpenAI
-from my_tools import search_tool
-#模型实例
+from langchain_deepseek import ChatDeepSeek
+
+from src.db_sql.agent_tools import search_tool
+
+load_dotenv()
+
 model = ChatDeepSeek(
     model="deepseek-chat",
     temperature=0,
@@ -10,15 +15,11 @@ model = ChatDeepSeek(
 #自定义工具列表 
 custom_tools = [search_tool]
 
-#Agent角色定义
-prompt = "你是一个AI助手"
+prompt = "你是一个错题管理助手"
 
 #创建Agent
 agent = create_deep_agent(
     model=model,
-    tools=custom_tools,
-    system_prompt = prompt
+    tools= custom_tools,
+    system_prompt="You are a study mistake management assistant.",
 )
-
-#执行Agent
-result = agent.invoke({"message":[{"role":"user","content":"..."}]})

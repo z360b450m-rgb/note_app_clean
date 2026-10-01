@@ -16,10 +16,16 @@ type NotebookPluginInstallation = import('@/plugins/types').NotebookPluginInstal
 interface Window {
   electronAPI?: {
     platform: string
+    onCloseRequested: (callback: () => void) => () => void
+    confirmClose: () => Promise<void>
     getAll: (notebookId: string) => Promise<any[]>
     get: (notebookId: string, id: string) => Promise<any | null>
     put: (entry: any) => Promise<void>
     delete: (notebookId: string, id: string) => Promise<void>
+    getAllQuestionGroups: (notebookId: string) => Promise<any[]>
+    getQuestionGroup: (notebookId: string, groupId: string) => Promise<any | null>
+    putQuestionGroup: (group: any) => Promise<void>
+    deleteQuestionGroup: (notebookId: string, groupId: string) => Promise<void>
     putSnapshot: (notebookId: string, snapshot: any) => Promise<void>
     getSnapshot: (notebookId: string, entryId: string) => Promise<any | null>
     getAllSnapshots: (notebookId: string) => Promise<any[]>
@@ -27,6 +33,7 @@ interface Window {
     deleteAllSnapshots: (notebookId: string) => Promise<void>
     getDataDir: () => Promise<string>
     setDataDir: () => Promise<string>
+    saveImage: (notebookId: string, bytes: Uint8Array, mimeType: string) => Promise<string>
     exportAll: () => Promise<string>
     importAll: (notebookId: string, entries: any[]) => Promise<void>
     exportArchive: () => Promise<{ success: boolean; message: string; count?: number }>

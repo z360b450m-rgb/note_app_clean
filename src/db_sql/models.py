@@ -41,6 +41,7 @@ class NotebookModel(Base):
     )
 
     entries = relationship("NoteEntryModel", back_populates="notebook", cascade="all, delete-orphan")
+    question_groups = relationship("QuestionGroupModel", back_populates="notebook", cascade="all, delete-orphan")
 
 
 class UserModel(Base):
@@ -66,6 +67,9 @@ class NoteEntryModel(Base):
     subject = Column(String(100), default="", index=True)
     source = Column(String(255), default="")
     drawings = Column(JSON, nullable=True)
+    folder = Column(String(255), nullable=True, index=True)
+    group_id = Column(String(64), nullable=True, index=True)
+    sub_question_order = Column(Integer, nullable=True)
     sort_order = Column(Integer, default=0)
     created_at = Column(BigInteger, default=lambda: int(time.time() * 1000))
     updated_at = Column(
@@ -85,6 +89,24 @@ class NoteEntryModel(Base):
     notebook = relationship("NotebookModel", back_populates="entries")
     tags = relationship("TagModel", secondary=entry_tags, back_populates="entries")
     review_logs = relationship("ReviewLogModel", back_populates="entry", cascade="all, delete-orphan")
+
+
+class QuestionGroupModel(Base):
+    __tablename__ = "question_groups"
+
+    id = Column(String(64), primary_key=True, index=True)
+    notebook_id = Column(String(64), ForeignKey("notebooks.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String(255), nullable=False, default="")
+    material = Column(Text, nullable=True)
+    drawings = Column(JSON, nullable=True)
+    created_at = Column(BigInteger, default=lambda: int(time.time() * 1000))
+    updated_at = Column(
+        BigInteger,
+        default=lambda: int(time.time() * 1000),
+        onupdate=lambda: int(time.time() * 1000),
+    )
+
+    notebook = relationship("NotebookModel", back_populates="question_groups")
 
 
 class TagModel(Base):

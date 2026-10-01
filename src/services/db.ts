@@ -1,14 +1,16 @@
 // Persistent storage adapters. Keep the IndexedDB schema and Electron file format unchanged.
-import type { NoteEntry, ReviewLog, Notebook } from '@/types'
+import type { NoteEntry, ReviewLog, Notebook, QuestionGroup } from '@/types'
 import type {
   EntryRepository,
   EntrySnapshot,
   NotebookRepository,
+  QuestionGroupRepository,
   ReviewLogRepository,
 } from '@/services/repositories'
 import {
   smartEntryRepository,
   smartNotebookRepository,
+  smartQuestionGroupRepository,
   smartReviewLogRepository,
 } from '@/services/apiAdapter'
 
@@ -16,9 +18,10 @@ const STORE = 'entries'
 const SNAP_STORE = 'snapshots'
 const REVIEW_LOG_STORE = 'reviewLogs'
 const NOTEBOOK_STORE = 'notebooks'
+const QUESTION_GROUP_STORE = 'questionGroups'
 
 const DB_NAME = 'CuotiDB'
-const DB_VERSION = 5
+const DB_VERSION = 6
 
 function isElectron(): boolean {
   return typeof window !== 'undefined' && !!window.electronAPI
@@ -55,6 +58,10 @@ function openDB(): Promise<IDBDatabase> {
       }
       if (!database.objectStoreNames.contains(NOTEBOOK_STORE)) {
         database.createObjectStore(NOTEBOOK_STORE, { keyPath: 'id' })
+      }
+      if (!database.objectStoreNames.contains(QUESTION_GROUP_STORE)) {
+        const store = database.createObjectStore(QUESTION_GROUP_STORE, { keyPath: 'id' })
+        store.createIndex('notebookId', 'notebookId', { unique: false })
       }
     }
     req.onsuccess = () => resolve(req.result)
@@ -137,6 +144,26 @@ export const electronNotebookRepository: NotebookRepository = {
   },
 }
 
+export const electronQuestionGroupRepository: QuestionGroupRepository = {
+  getAll(notebookId) {
+    return window.electronAPI!.getAllQuestionGroups(requireNotebookId(notebookId))
+  },
+  async get(notebookId, groupId) {
+    const group = await window.electronAPI!.getQuestionGroup(requireNotebookId(notebookId), groupId)
+    return group ?? undefined
+  },
+  async put(notebookId, group) {
+    requireNotebookId(notebookId)
+    if (group.notebookId !== notebookId) {
+      throw new Error(`Question group ${group.id} belongs to another notebook`)
+    }
+    await window.electronAPI!.putQuestionGroup(group)
+  },
+  async delete(notebookId, groupId) {
+    await window.electronAPI!.deleteQuestionGroup(requireNotebookId(notebookId), groupId)
+  },
+}
+
 export const electronReviewLogRepository: ReviewLogRepository = {
   getAll(notebookId) {
     return window.electronAPI!.getAllReviewLogs(requireNotebookId(notebookId))
@@ -208,9 +235,10 @@ export const indexedDbNotebookRepository: NotebookRepository = {
     requireNotebookId(notebookId)
     const entries = await indexedDbEntryRepository.getAll(notebookId)
     const entryIds = new Set(entries.map((entry) => entry.id))
-    const [snapshots, reviewLogs] = await Promise.all([
+    const [snapshots, reviewLogs, questionGroups] = await Promise.all([
       indexedDbEntryRepository.getAllSnapshots(notebookId),
       getAllIndexedDbReviewLogs(),
+      indexedDbQuestionGroupRepository.getAll(notebookId),
     ])
     await Promise.all([
       deleteKeys(
@@ -225,8 +253,44 @@ export const indexedDbNotebookRepository: NotebookRepository = {
         STORE,
         entries.map((entry) => entry.id),
       ),
+      deleteKeys(
+        QUESTION_GROUP_STORE,
+        questionGroups.map((group) => group.id),
+      ),
     ])
     await tx('readwrite', (store) => store.delete(notebookId), NOTEBOOK_STORE)
+  },
+}
+
+export const indexedDbQuestionGroupRepository: QuestionGroupRepository = {
+  async getAll(notebookId) {
+    requireNotebookId(notebookId)
+    const groups = await tx<QuestionGroup[]>(
+      'readonly',
+      (store) => store.index('notebookId').getAll(notebookId),
+      QUESTION_GROUP_STORE,
+    )
+    return groups
+  },
+  async get(notebookId, groupId) {
+    requireNotebookId(notebookId)
+    const group = await tx<QuestionGroup | undefined>(
+      'readonly',
+      (store) => store.get(groupId),
+      QUESTION_GROUP_STORE,
+    )
+    return group?.notebookId === notebookId ? group : undefined
+  },
+  async put(notebookId, group) {
+    requireNotebookId(notebookId)
+    if (group.notebookId !== notebookId) {
+      throw new Error(`Question group ${group.id} belongs to another notebook`)
+    }
+    await tx('readwrite', (store) => store.put(group), QUESTION_GROUP_STORE)
+  },
+  async delete(notebookId, groupId) {
+    const group = await indexedDbQuestionGroupRepository.get(notebookId, groupId)
+    if (group) await tx('readwrite', (store) => store.delete(groupId), QUESTION_GROUP_STORE)
   },
 }
 
@@ -256,20 +320,27 @@ export const indexedDbReviewLogRepository: ReviewLogRepository = {
   },
 }
 
-const localEntryRepo: EntryRepository = isElectron()
+// The API adapters keep the local repositories as the source of immediate UI
+// updates, then mirror supported data to the authenticated backend.
+const localEntryRepository: EntryRepository = isElectron()
   ? electronEntryRepository
   : indexedDbEntryRepository
-const localNotebookRepo: NotebookRepository = isElectron()
+const localNotebookRepository: NotebookRepository = isElectron()
   ? electronNotebookRepository
   : indexedDbNotebookRepository
-const localReviewLogRepo: ReviewLogRepository = isElectron()
+const localReviewLogRepository: ReviewLogRepository = isElectron()
   ? electronReviewLogRepository
   : indexedDbReviewLogRepository
 
-// 离线优先：本地写入立即完成，远端同步通过持久队列自动补发。
-export const entryRepository: EntryRepository = smartEntryRepository(localEntryRepo)
-export const notebookRepository: NotebookRepository = smartNotebookRepository(localNotebookRepo)
-export const reviewLogRepository: ReviewLogRepository = smartReviewLogRepository(localReviewLogRepo)
+export const entryRepository: EntryRepository = smartEntryRepository(localEntryRepository)
+export const notebookRepository: NotebookRepository = smartNotebookRepository(localNotebookRepository)
+export const reviewLogRepository: ReviewLogRepository = smartReviewLogRepository(localReviewLogRepository)
+const localQuestionGroupRepository: QuestionGroupRepository = isElectron()
+  ? electronQuestionGroupRepository
+  : indexedDbQuestionGroupRepository
+export const questionGroupRepository: QuestionGroupRepository = smartQuestionGroupRepository(
+  localQuestionGroupRepository,
+)
 
 // Compatibility facade for code outside the migrated core. New code should use the repositories above.
 export const db = {
@@ -288,6 +359,10 @@ export const db = {
   getAllNotebooks: notebookRepository.getAll.bind(notebookRepository),
   putNotebook: notebookRepository.put.bind(notebookRepository),
   deleteNotebook: notebookRepository.delete.bind(notebookRepository),
+  getAllQuestionGroups: questionGroupRepository.getAll.bind(questionGroupRepository),
+  getQuestionGroup: questionGroupRepository.get.bind(questionGroupRepository),
+  putQuestionGroup: questionGroupRepository.put.bind(questionGroupRepository),
+  deleteQuestionGroup: questionGroupRepository.delete.bind(questionGroupRepository),
 }
 
 async function getAllIndexedDbEntries(): Promise<NoteEntry[]> {
@@ -300,6 +375,10 @@ async function getAllIndexedDbSnapshots(): Promise<EntrySnapshot[]> {
 
 async function getAllIndexedDbReviewLogs(): Promise<ReviewLog[]> {
   return tx<ReviewLog[]>('readonly', (store) => store.getAll(), REVIEW_LOG_STORE)
+}
+
+async function getAllIndexedDbQuestionGroups(): Promise<QuestionGroup[]> {
+  return tx<QuestionGroup[]>('readonly', (store) => store.getAll(), QUESTION_GROUP_STORE)
 }
 
 export async function migrateFromIndexedDB(): Promise<number> {
@@ -327,18 +406,20 @@ export async function migrateFromIndexedDB(): Promise<number> {
   }
 
   try {
-    const [entries, notebooks, reviewLogs, snapshots] = await Promise.all([
+    const [entries, notebooks, reviewLogs, snapshots, questionGroups] = await Promise.all([
       getAllIndexedDbEntries(),
       indexedDbNotebookRepository.getAll(),
       getAllIndexedDbReviewLogs(),
       getAllIndexedDbSnapshots(),
+      getAllIndexedDbQuestionGroups(),
     ])
 
     if (
       entries.length === 0 &&
       notebooks.length === 0 &&
       reviewLogs.length === 0 &&
-      snapshots.length === 0
+      snapshots.length === 0 &&
+      questionGroups.length === 0
     ) {
       try {
         await window.electronAPI!.markIndexedDBMigrated()
@@ -351,6 +432,11 @@ export async function migrateFromIndexedDB(): Promise<number> {
     for (const notebook of notebooks) await electronNotebookRepository.put(notebook)
     for (const entry of entries) {
       if (entry.notebookId) await electronEntryRepository.put(entry.notebookId, entry)
+    }
+    for (const group of questionGroups) {
+      if (group.notebookId) {
+        await electronQuestionGroupRepository.put(group.notebookId, group)
+      }
     }
 
     const notebookByEntry = new Map(entries.map((entry) => [entry.id, entry.notebookId]))

@@ -3,6 +3,8 @@ import { ref, computed, nextTick, watch } from 'vue'
 import type { NoteEntry } from '@/types'
 import { detectGarbledText, type GarbledSpan } from '@/utils/parsePdf'
 import { sanitizeHtml } from '@/utils/sanitize'
+import { saveImage, toDisplayHtml, toStorageHtml } from '@/services/imageStorage'
+import { pastePlainText } from '@/utils/plainTextPaste'
 
 const props = defineProps<{
   entries: Partial<NoteEntry>[]
@@ -44,47 +46,51 @@ function hasGarbled(entry: Partial<NoteEntry>): boolean {
 // --- Sync contenteditable → local ---
 function syncQuestion(i: number) {
   const el = questionRefs.value[String(i)]
-  if (el) local.value[i].question = el.innerHTML
+  if (el) local.value[i].question = toStorageHtml(el.innerHTML)
 }
 
 function syncAnswer(i: number, field: 'wrongAnswer' | 'correctAnswer') {
   const el = answerRefs.value[`${i}-${field}`]
-  if (el) local.value[i][field] = el.innerHTML
+  if (el) local.value[i][field] = toStorageHtml(el.innerHTML)
 }
 
 // --- Image paste ---
 function onPasteQuestion(e: ClipboardEvent, i: number) {
   const items = e.clipboardData?.items
-  if (!items) return
-  for (const item of items) {
+  for (const item of Array.from(items || [])) {
     if (item.type.startsWith('image/')) {
       e.preventDefault()
       const blob = item.getAsFile()
       if (!blob) continue
-      const reader = new FileReader()
-      reader.onload = () => {
-        const img = document.createElement('img')
-        img.src = reader.result as string
-        img.style.maxWidth = '100%'
-        img.style.borderRadius = '6px'
-        const sel = window.getSelection()
-        if (!sel) return
-        const range = sel.getRangeAt(0)
-        range.deleteContents()
-        range.insertNode(img)
-        range.collapse(false)
-        const br = document.createElement('br')
-        range.insertNode(br)
-        range.setStartAfter(br)
-        range.collapse(true)
-        sel.removeAllRanges()
-        sel.addRange(range)
-        syncQuestion(i)
-      }
-      reader.readAsDataURL(blob)
-      break
+      void saveImage(local.value[i].notebookId || '', blob)
+        .then(({ displayUrl }) => {
+          const img = document.createElement('img')
+          img.src = displayUrl
+          img.style.maxWidth = '100%'
+          img.style.borderRadius = '6px'
+          const sel = window.getSelection()
+          if (!sel) return
+          const range = sel.getRangeAt(0)
+          range.deleteContents()
+          range.insertNode(img)
+          range.collapse(false)
+          const br = document.createElement('br')
+          range.insertNode(br)
+          range.setStartAfter(br)
+          range.collapse(true)
+          sel.removeAllRanges()
+          sel.addRange(range)
+          syncQuestion(i)
+        })
+        .catch((error) => console.error('Failed to save image', error))
+      return
     }
   }
+  if (pastePlainText(e, questionRefs.value[String(i)])) syncQuestion(i)
+}
+
+function onPasteAnswer(e: ClipboardEvent, i: number, field: 'wrongAnswer' | 'correctAnswer') {
+  if (pastePlainText(e, answerRefs.value[`${i}-${field}`])) syncAnswer(i, field)
 }
 
 // --- getTextOffset: count characters before a DOM node within a root element ---
@@ -294,7 +300,7 @@ const entryCount = computed(() => local.value.length)
                 class="text-sm leading-relaxed outline-none min-h-[40px] rounded-md border border-transparent focus:border-accent/40 focus:bg-gray-50 dark:focus:bg-[#1e1e1c] px-2 py-1.5 transition-colors md-content"
                 @input="syncQuestion(i)"
                 @paste="onPasteQuestion($event, i)"
-                v-html="entry.question || ''"
+                v-html="toDisplayHtml(entry.question || '')"
               />
 
               <!-- Garbled details -->
@@ -335,7 +341,8 @@ const entryCount = computed(() => local.value.length)
                   contenteditable="true"
                   class="text-sm leading-relaxed outline-none min-h-[30px] rounded-md border border-transparent focus:border-accent/40 focus:bg-gray-50 dark:focus:bg-[#1e1e1c] px-2 py-1.5 transition-colors"
                   @input="syncAnswer(i, 'wrongAnswer')"
-                  v-html="entry.wrongAnswer || ''"
+                  @paste="onPasteAnswer($event, i, 'wrongAnswer')"
+                  v-html="toDisplayHtml(entry.wrongAnswer || '')"
                 />
               </div>
               <div v-if="entry.correctAnswer">
@@ -351,7 +358,8 @@ const entryCount = computed(() => local.value.length)
                   contenteditable="true"
                   class="text-sm leading-relaxed outline-none min-h-[30px] rounded-md border border-transparent focus:border-accent/40 focus:bg-gray-50 dark:focus:bg-[#1e1e1c] px-2 py-1.5 transition-colors"
                   @input="syncAnswer(i, 'correctAnswer')"
-                  v-html="entry.correctAnswer || ''"
+                  @paste="onPasteAnswer($event, i, 'correctAnswer')"
+                  v-html="toDisplayHtml(entry.correctAnswer || '')"
                 />
               </div>
             </div>

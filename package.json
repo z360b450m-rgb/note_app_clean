@@ -15,6 +15,10 @@
   "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
+    "dev:all": "node scripts/dev-services.cjs start",
+    "dev:all:no-open": "node scripts/dev-services.cjs start --no-open",
+    "dev:status": "node scripts/dev-services.cjs status",
+    "dev:stop": "node scripts/dev-services.cjs stop",
     "build": "vite build",
     "postinstall": "patch-package",
     "build:win:release": "node scripts/build-windows-release.cjs dir",

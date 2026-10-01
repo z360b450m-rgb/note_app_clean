@@ -5,7 +5,6 @@ import { ref, onMounted, onUnmounted } from 'vue'
 
 defineProps<{
   activeId: string | null
-  answersHidden: boolean
   canGoPrev: boolean
   canGoNext: boolean
   searchQuery: string
@@ -22,7 +21,6 @@ const emit = defineEmits<{
   new: []
   prev: []
   next: []
-  reveal: []
   delete: []
   save: []
   toggleMode: []
@@ -114,7 +112,7 @@ function moreAction(
       <span
         class="inline-block overflow-hidden whitespace-nowrap transition-[max-width,opacity,margin] duration-300 ease-out"
         :class="compact ? 'max-w-0 opacity-0' : 'max-w-32 opacity-100'"
-        >{{ mode === 'review' ? '退出复习' : '复习模式' }}</span
+        >{{ mode === 'review' ? '退出复习' : '进入复习' }}</span
       >
       <span
         v-if="mode === 'edit' && dueCount > 0"
@@ -299,55 +297,6 @@ function moreAction(
           class="inline-block overflow-hidden whitespace-nowrap transition-[max-width,opacity] duration-300 ease-out"
           :class="compact ? 'max-w-0 opacity-0' : 'max-w-24 opacity-100'"
           >下一题</span
-        >
-      </button>
-
-      <!-- Reveal toggle -->
-      <button
-        v-if="activeId"
-        style="-webkit-app-region: no-drag"
-        class="btn-icon flex items-center gap-1 rounded-md border text-[13px] cursor-pointer transition-all"
-        :class="[
-          answersHidden
-            ? 'bg-accent text-white border-accent'
-            : 'border-gray-200 dark:border-[#2e2e2c] bg-white dark:bg-[#1e1e1c] hover:bg-gray-100 dark:hover:bg-[#2a2a28] text-gray-700 dark:text-brand-light-gray',
-          compact ? 'px-2 py-1.5' : 'px-2.5 py-1.5',
-        ]"
-        title="显示/隐藏正确答案"
-        @click="emit('reveal')"
-      >
-        <template v-if="answersHidden">
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <path
-              d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"
-            />
-            <line x1="1" y1="1" x2="23" y2="23" />
-          </svg>
-        </template>
-        <template v-else>
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-            <circle cx="12" cy="12" r="3" />
-          </svg>
-        </template>
-        <span
-          class="inline-block overflow-hidden whitespace-nowrap transition-[max-width,opacity] duration-300 ease-out"
-          :class="compact ? 'max-w-0 opacity-0' : 'max-w-32 opacity-100'"
-          >{{ answersHidden ? '显示正确答案' : '隐藏正确答案' }}</span
         >
       </button>
 

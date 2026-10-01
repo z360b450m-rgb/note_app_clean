@@ -4,7 +4,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from sqlalchemy.orm import Session
 
-from src.db_sql.models import NotebookModel, NoteEntryModel, ReviewLogModel, TagModel
+from src.db_sql.models import NotebookModel, NoteEntryModel, QuestionGroupModel, ReviewLogModel, TagModel
 
 
 def normalize_tags(tags: Optional[Iterable[str]]) -> List[str]:
@@ -74,6 +74,9 @@ def serialize_entry(entry: NoteEntryModel) -> dict:
         "source": entry.source or "",
         "tags": [tag.name for tag in entry.tags],
         "drawings": entry.drawings or {},
+        "folder": entry.folder,
+        "group_id": entry.group_id,
+        "sub_question_order": entry.sub_question_order,
         "sort_order": entry.sort_order,
         "created_at": entry.created_at,
         "updated_at": entry.updated_at,
@@ -84,6 +87,18 @@ def serialize_entry(entry: NoteEntryModel) -> dict:
         "interval": entry.interval,
         "last_review_date": entry.last_review_date,
         "next_review_date": entry.next_review_date,
+    }
+
+
+def serialize_question_group(group: QuestionGroupModel) -> dict:
+    return {
+        "id": group.id,
+        "notebook_id": group.notebook_id,
+        "title": group.title,
+        "material": group.material or "",
+        "drawings": group.drawings or {},
+        "created_at": group.created_at,
+        "updated_at": group.updated_at,
     }
 
 
@@ -174,7 +189,13 @@ def create_entry(
     correct_answer: str = "",
     wrong_answer: str = "",
     subject: str = "",
+    source: str = "",
     tags: Optional[List[str]] = None,
+    drawings: Optional[Dict[str, Any]] = None,
+    sort_order: int = 0,
+    folder: Optional[str] = None,
+    group_id: Optional[str] = None,
+    sub_question_order: Optional[int] = None,
     entry_id: Optional[str] = None,
 ) -> dict:
     linked_tags = get_or_create_tags(db, tags)
@@ -188,7 +209,13 @@ def create_entry(
             existing.correct_answer = correct_answer
             existing.wrong_answer = wrong_answer
             existing.subject = subject
+            existing.source = source
             existing.tags = linked_tags
+            existing.drawings = drawings
+            existing.sort_order = sort_order
+            existing.folder = folder
+            existing.group_id = group_id
+            existing.sub_question_order = sub_question_order
             existing.updated_at = int(time.time() * 1000)
             db.commit()
             db.refresh(existing)
@@ -202,7 +229,13 @@ def create_entry(
         correct_answer=correct_answer,
         wrong_answer=wrong_answer,
         subject=subject,
+        source=source,
         tags=linked_tags,
+        drawings=drawings,
+        sort_order=sort_order,
+        folder=folder,
+        group_id=group_id,
+        sub_question_order=sub_question_order,
     )
     db.add(entry)
     db.commit()
@@ -235,6 +268,76 @@ def delete_entry(db: Session, entry_id: str) -> bool:
         db.commit()
         return True
     return False
+
+
+def get_all_question_groups(db: Session, notebook_id: str) -> dict:
+    groups = (
+        db.query(QuestionGroupModel)
+        .filter(QuestionGroupModel.notebook_id == notebook_id)
+        .order_by(QuestionGroupModel.created_at.asc())
+        .all()
+    )
+    return {"items": [serialize_question_group(group) for group in groups]}
+
+
+def get_question_group(db: Session, group_id: str) -> Optional[dict]:
+    group = db.query(QuestionGroupModel).filter(QuestionGroupModel.id == group_id).first()
+    return serialize_question_group(group) if group else None
+
+
+def create_question_group(
+    db: Session,
+    notebook_id: str,
+    title: str = "",
+    material: str = "",
+    drawings: Optional[Dict[str, Any]] = None,
+    group_id: Optional[str] = None,
+) -> dict:
+    if group_id:
+        existing = db.query(QuestionGroupModel).filter(QuestionGroupModel.id == group_id).first()
+        if existing:
+            existing.notebook_id = notebook_id
+            existing.title = title
+            existing.material = material
+            existing.drawings = drawings
+            existing.updated_at = int(time.time() * 1000)
+            db.commit()
+            db.refresh(existing)
+            return serialize_question_group(existing)
+
+    group = QuestionGroupModel(
+        id=group_id or str(uuid.uuid4()),
+        notebook_id=notebook_id,
+        title=title,
+        material=material,
+        drawings=drawings,
+    )
+    db.add(group)
+    db.commit()
+    db.refresh(group)
+    return serialize_question_group(group)
+
+
+def update_question_group(db: Session, group_id: str, update_fields: Dict[str, Any]) -> Optional[dict]:
+    group = db.query(QuestionGroupModel).filter(QuestionGroupModel.id == group_id).first()
+    if not group:
+        return None
+    for key, value in update_fields.items():
+        if hasattr(group, key):
+            setattr(group, key, value)
+    group.updated_at = int(time.time() * 1000)
+    db.commit()
+    db.refresh(group)
+    return serialize_question_group(group)
+
+
+def delete_question_group(db: Session, group_id: str) -> bool:
+    group = db.query(QuestionGroupModel).filter(QuestionGroupModel.id == group_id).first()
+    if not group:
+        return False
+    db.delete(group)
+    db.commit()
+    return True
 
 
 def search_and_filter_entries(

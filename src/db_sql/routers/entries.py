@@ -50,7 +50,13 @@ def create_entry(
         correct_answer=payload.correct_answer or "",
         wrong_answer=payload.wrong_answer or "",
         subject=payload.subject or "",
+        source=payload.source or "",
         tags=payload.tags,
+        drawings=payload.drawings,
+        sort_order=payload.sort_order or 0,
+        folder=payload.folder,
+        group_id=payload.group_id,
+        sub_question_order=payload.sub_question_order,
     )
 
 

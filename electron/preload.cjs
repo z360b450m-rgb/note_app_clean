@@ -35,11 +35,27 @@ const { contextBridge, ipcRenderer } = require('electron')
 contextBridge.exposeInMainWorld('electronAPI', {
   platform: process.platform,
 
+  // Window close handshake. The renderer decides whether dirty content has
+  // been saved before allowing the native window to close.
+  onCloseRequested: (callback) => {
+    const listener = () => callback()
+    ipcRenderer.on('app:requestClose', listener)
+    return () => ipcRenderer.removeListener('app:requestClose', listener)
+  },
+  confirmClose: () => ipcRenderer.invoke('app:confirmClose'),
+
   // Storage API — notebookId required for per-notebook sharding
   getAll: (notebookId) => ipcRenderer.invoke('storage:getAll', notebookId),
   get: (notebookId, id) => ipcRenderer.invoke('storage:get', notebookId, id),
   put: (entry) => ipcRenderer.invoke('storage:put', entry),
   delete: (notebookId, id) => ipcRenderer.invoke('storage:delete', notebookId, id),
+  getAllQuestionGroups: (notebookId) =>
+    ipcRenderer.invoke('storage:getAllQuestionGroups', notebookId),
+  getQuestionGroup: (notebookId, groupId) =>
+    ipcRenderer.invoke('storage:getQuestionGroup', notebookId, groupId),
+  putQuestionGroup: (group) => ipcRenderer.invoke('storage:putQuestionGroup', group),
+  deleteQuestionGroup: (notebookId, groupId) =>
+    ipcRenderer.invoke('storage:deleteQuestionGroup', notebookId, groupId),
 
   putSnapshot: (notebookId, snapshot) =>
     ipcRenderer.invoke('storage:putSnapshot', notebookId, snapshot),
@@ -52,6 +68,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   getDataDir: () => ipcRenderer.invoke('storage:getDataDir'),
   setDataDir: () => ipcRenderer.invoke('storage:setDataDir'),
+
+  saveImage: (notebookId, bytes, mimeType) =>
+    ipcRenderer.invoke('images:save', notebookId, bytes, mimeType),
 
   exportAll: () => ipcRenderer.invoke('storage:exportAll'),
   importAll: (notebookId, entries) => ipcRenderer.invoke('storage:importAll', notebookId, entries),

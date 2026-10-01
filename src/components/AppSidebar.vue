@@ -1,19 +1,20 @@
 <script setup lang="ts">
 // @AI-NOTE: 侧边栏组件 —— 筛选/排序/条目选择由 useFilter/useEntries
 // Hook 驱动。禁止在此实现筛选逻辑或直接操作数据库。
-import { ref, nextTick, computed } from 'vue'
-import type { NoteEntry } from '@/types'
+import { ref, nextTick, computed, onUnmounted } from 'vue'
+import type { NoteEntry, QuestionGroup } from '@/types'
 import type { SortKey, SortDir } from '@/composables/useFilter'
 import SubjectChips from './SubjectChips.vue'
 import TagDots from './TagDots.vue'
-import EntryList from './EntryList.vue'
 import TagMultiSelect from './TagMultiSelect.vue'
+import FolderEntryTree from './FolderEntryTree.vue'
 import { MASTERY_LEVEL_DEFS } from '@/composables/useStats'
 import type { NotebookPluginManifest } from '@/plugins/types'
 
 const props = defineProps<{
   notebookName: string
   entries: NoteEntry[]
+  questionGroups: QuestionGroup[]
   filteredEntries: NoteEntry[]
   activeId: string | null
   activeSubject: string
@@ -29,6 +30,9 @@ const props = defineProps<{
   allSources: string[]
   activeSource: string | null
   sourceMap: Record<string, number>
+  allFolders: string[]
+  activeFolder: string | null
+  folderMap: Record<string, number>
   dueCount: number
   mode: 'edit' | 'review'
   selectedIds: Set<string>
@@ -43,6 +47,7 @@ const emit = defineEmits<{
   filterSubject: [subject: string]
   filterTag: [tag: string]
   filterSource: [source: string | null]
+  filterFolder: [folder: string | null]
   filterMastery: [label: string]
   quickCreate: [subject: string]
   rename: [id: string, newTitle: string]
@@ -62,6 +67,10 @@ const emit = defineEmits<{
   'delete-tag': [name: string]
   'rename-source': [oldName: string, newName: string]
   'delete-source': [name: string]
+  'add-folder': [name: string]
+  'rename-folder': [oldName: string, newName: string]
+  'delete-folder': [name: string]
+  'move-selected-to-folder': [folder?: string]
   'batch-delete': []
   'batch-tag': [tags: string[]]
   'batch-export': []
@@ -87,9 +96,58 @@ const editingSource = ref<string | null>(null)
 const editSourceValue = ref('')
 const editSourceInput = ref<HTMLInputElement | null>(null)
 const deletingSource = ref<string | null>(null)
+const filterPanelOpen = ref(true)
+const filterPanelHeight = ref(300)
+const sidebarEl = ref<HTMLElement | null>(null)
+const addingFolder = ref(false)
+const newFolderName = ref('')
+const newFolderInput = ref<HTMLInputElement | null>(null)
 const installedPlugins = computed(() =>
   props.availablePlugins.filter((plugin) => props.installedPluginIds.includes(plugin.id)),
 )
+
+function startAddFolder() {
+  addingFolder.value = true
+  newFolderName.value = ''
+  nextTick(() => newFolderInput.value?.focus())
+}
+
+function confirmAddFolder() {
+  const name = newFolderName.value.trim()
+  if (name) emit('add-folder', name)
+  addingFolder.value = false
+}
+
+let resizeStartY = 0
+let resizeStartHeight = 0
+
+function onResizeMove(event: PointerEvent) {
+  const sidebarHeight = sidebarEl.value?.clientHeight ?? window.innerHeight
+  const maxHeight = Math.max(170, sidebarHeight - 320)
+  filterPanelHeight.value = Math.min(
+    maxHeight,
+    Math.max(130, resizeStartHeight + event.clientY - resizeStartY),
+  )
+}
+
+function stopResize() {
+  window.removeEventListener('pointermove', onResizeMove)
+  window.removeEventListener('pointerup', stopResize)
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+}
+
+function startResize(event: PointerEvent) {
+  if (!filterPanelOpen.value) return
+  resizeStartY = event.clientY
+  resizeStartHeight = filterPanelHeight.value
+  document.body.style.cursor = 'row-resize'
+  document.body.style.userSelect = 'none'
+  window.addEventListener('pointermove', onResizeMove)
+  window.addEventListener('pointerup', stopResize)
+}
+
+onUnmounted(stopResize)
 
 function startEditSource(name: string) {
   editingSource.value = name
@@ -206,6 +264,7 @@ function cancelAddSource() {
 <template>
   <!-- @AI-VIEW: DOM 可自由重构。样式仅限 Tailwind CSS 工具类。严禁内联 style 或自定义 CSS。 -->
   <aside
+    ref="sidebarEl"
     class="bg-white dark:bg-[#141413] border-r border-gray-100 dark:border-[#2e2e2c] flex flex-col overflow-hidden transition-[width] duration-300 ease-out"
     :class="collapsed ? 'w-[48px]' : 'w-[280px]'"
   >
@@ -359,7 +418,7 @@ function cancelAddSource() {
 
     <!-- Expanded content -->
     <template v-else>
-      <div class="p-4 border-b border-gray-100 dark:border-[#2e2e2c]">
+      <div class="px-4 pt-4">
         <!-- Current notebook -->
         <div v-if="notebookName" class="flex items-center gap-2 mb-3">
           <button
@@ -381,8 +440,33 @@ function cancelAddSource() {
           <span class="text-[13px] font-medium text-gray-700 dark:text-brand-light-gray truncate">{{
             notebookName
           }}</span>
+          <button
+            class="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-[#242422] dark:hover:text-brand-light-gray"
+            :title="filterPanelOpen ? '收起筛选面板' : '展开筛选面板'"
+            data-testid="toggle-filter-panel"
+            @click="filterPanelOpen = !filterPanelOpen"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              class="transition-transform"
+              :class="filterPanelOpen ? '' : 'rotate-180'"
+            >
+              <polyline points="6 15 12 9 18 15" />
+            </svg>
+          </button>
         </div>
+      </div>
 
+      <div
+        v-show="filterPanelOpen"
+        class="shrink-0 overflow-y-auto px-4 pb-3"
+        :style="{ height: `${filterPanelHeight}px` }"
+      >
         <!-- Subject filter -->
         <SubjectChips
           :active-subject="activeSubject"
@@ -701,6 +785,18 @@ function cancelAddSource() {
         </div>
       </div>
 
+      <div
+        v-if="filterPanelOpen"
+        class="group relative h-2 shrink-0 cursor-row-resize border-y border-gray-100 bg-gray-50/60 dark:border-[#2e2e2c] dark:bg-[#1b1b19]"
+        title="拖动调整上下区域大小"
+        data-testid="sidebar-resizer"
+        @pointerdown.prevent="startResize"
+      >
+        <span
+          class="absolute left-1/2 top-1/2 h-0.5 w-8 -translate-x-1/2 -translate-y-1/2 rounded-full bg-gray-300 transition-colors group-hover:bg-accent dark:bg-[#444440]"
+        />
+      </div>
+
       <!-- Entry list -->
       <div class="flex-1 overflow-y-auto border-t border-gray-100 dark:border-[#2e2e2c]">
         <div
@@ -874,6 +970,27 @@ function cancelAddSource() {
               <!-- Click outside to close -->
               <div v-if="batchMenuOpen" class="fixed inset-0 z-20" @click="batchMenuOpen = false" />
             </div>
+
+            <button
+              class="flex h-6 w-6 items-center justify-center rounded-md text-gray-400 transition-colors hover:bg-accent/10 hover:text-accent"
+              title="新建文件夹"
+              data-testid="add-folder"
+              @click="startAddFolder"
+            >
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"
+                />
+                <path d="M12 11v6M9 14h6" />
+              </svg>
+            </button>
           </div>
 
           <!-- Sort selector -->
@@ -945,16 +1062,43 @@ function cancelAddSource() {
           <!-- Click outside to close -->
           <div v-if="sortOpen" class="fixed inset-0 z-20" @click="sortOpen = false" />
         </div>
-        <EntryList
+
+        <div v-if="addingFolder" class="mx-3 mb-2 flex items-center gap-1.5">
+          <input
+            ref="newFolderInput"
+            v-model="newFolderName"
+            class="min-w-0 flex-1 rounded-lg border border-accent bg-white px-2.5 py-1.5 text-[12px] text-gray-700 outline-none ring-2 ring-accent/10 dark:bg-[#141413] dark:text-brand-light"
+            placeholder="文件夹名称"
+            data-testid="folder-name-input"
+            @keydown.enter="confirmAddFolder"
+            @keydown.escape="addingFolder = false"
+          />
+          <button
+            class="rounded-md bg-accent px-2 py-1.5 text-[11px] text-white"
+            @click="confirmAddFolder"
+          >
+            创建
+          </button>
+        </div>
+
+        <FolderEntryTree
           :entries="filteredEntries"
+          :folders="allFolders"
+          :question-groups="questionGroups"
           :active-id="activeId"
+          :active-folder="activeFolder"
           :sort-key="sortKey"
           :selected-ids="selectedIds"
+          :selected-count="selectedCount"
           @select="emit('select', $event)"
-          @rename="(id, title) => emit('rename', id, title)"
+          @select-folder="emit('filterFolder', $event ?? '__none__')"
+          @rename-entry="(id, title) => emit('rename', id, title)"
           @reorder="emit('reorder', $event)"
           @toggle-select="emit('toggle-select', $event)"
           @range-select="(ids, from, to) => emit('range-select', ids, from, to)"
+          @rename-folder="(oldName, newName) => emit('rename-folder', oldName, newName)"
+          @delete-folder="emit('delete-folder', $event)"
+          @move-selected="emit('move-selected-to-folder', $event)"
         />
       </div>
 
@@ -1001,6 +1145,7 @@ function cancelAddSource() {
       <div class="px-4 py-3 border-t border-gray-100 dark:border-[#2e2e2c]">
         <button
           class="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-[8px] text-[13px] text-brand-mid dark:text-brand-mid hover:text-brand-dark dark:hover:text-brand-light-gray hover:bg-brand-light-gray dark:hover:bg-[#2a2a28] transition-colors"
+          data-testid="settings-toggle"
           @click="emit('toggle-settings')"
         >
           <svg

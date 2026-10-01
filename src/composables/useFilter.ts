@@ -1,6 +1,7 @@
 import { ref, computed, type Ref, type ComputedRef } from 'vue'
-import type { NoteEntry } from '@/types'
+import type { NoteEntry, QuestionGroup } from '@/types'
 import { MASTERY_LEVEL_DEFS, getMasteryLevel } from '@/composables/useStats'
+import { dedupeById } from '@/utils/dedupeById'
 
 export type SortKey = 'updatedAt' | 'createdAt' | 'subject' | 'title' | 'custom' | 'shuffle'
 export type SortDir = 'asc' | 'desc'
@@ -9,6 +10,7 @@ export interface FilterState {
   activeSubject: Ref<string>
   activeTag: Ref<string | null>
   activeSource: Ref<string | null>
+  activeFolder: Ref<string | null>
   activeMastery: Ref<string>
   searchQuery: Ref<string>
   sortKey: Ref<SortKey>
@@ -17,10 +19,12 @@ export interface FilterState {
   subjectMap: ComputedRef<Record<string, number>>
   tagMap: ComputedRef<Record<string, number>>
   sourceMap: ComputedRef<Record<string, number>>
+  folderMap: ComputedRef<Record<string, number>>
   masteryMap: ComputedRef<Record<string, number>>
   setSubject: (s: string) => void
   setTag: (t: string) => void
   setSource: (s: string) => void
+  setFolder: (folder: string | null) => void
   setMastery: (label: string) => void
   setSearch: (q: string) => void
   setSort: (key: SortKey, dir?: SortDir) => void
@@ -31,10 +35,14 @@ export interface FilterState {
 // 纯业务逻辑。学科/标签/掌握程度筛选、关键词搜索、多维度排序
 // 均在此实现。FilterState 返回值类型必须向后兼容。
 // ===================================================================
-export function useFilter(entries: Ref<NoteEntry[]>): FilterState {
+export function useFilter(
+  entries: Ref<NoteEntry[]>,
+  questionGroups?: Ref<QuestionGroup[]>,
+): FilterState {
   const activeSubject = ref('__all__')
   const activeTag = ref<string | null>(null)
   const activeSource = ref<string | null>(null)
+  const activeFolder = ref<string | null>(null)
   const activeMastery = ref('__all__')
   const searchQuery = ref('')
   const sortKey = ref<SortKey>('updatedAt')
@@ -44,7 +52,7 @@ export function useFilter(entries: Ref<NoteEntry[]>): FilterState {
   const filteredEntries = computed(() => {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const _seed = shuffleSeed.value // re-compute when shuffle is clicked again
-    let list = [...entries.value]
+    let list = dedupeById(entries.value)
 
     if (activeSubject.value !== '__all__') {
       if (activeSubject.value === '__none__') {
@@ -71,13 +79,17 @@ export function useFilter(entries: Ref<NoteEntry[]>): FilterState {
 
     if (searchQuery.value.trim()) {
       const q = searchQuery.value.trim().toLowerCase()
+      const materialByGroupId = new Map(
+        (questionGroups?.value || []).map((group) => [group.id, group.material.toLowerCase()]),
+      )
       list = list.filter(
         (e) =>
           (e.question || '').toLowerCase().includes(q) ||
           (e.wrongAnswer || '').toLowerCase().includes(q) ||
           (e.correctAnswer || '').toLowerCase().includes(q) ||
           (e.subject || '').toLowerCase().includes(q) ||
-          (e.source || '').toLowerCase().includes(q),
+          (e.source || '').toLowerCase().includes(q) ||
+          (e.groupId ? materialByGroupId.get(e.groupId)?.includes(q) : false),
       )
     }
 
@@ -118,7 +130,7 @@ export function useFilter(entries: Ref<NoteEntry[]>): FilterState {
 
   const subjectMap = computed(() => {
     const map: Record<string, number> = {}
-    entries.value.forEach((e) => {
+    dedupeById(entries.value).forEach((e) => {
       if (e.subject) map[e.subject] = (map[e.subject] || 0) + 1
     })
     return map
@@ -126,7 +138,7 @@ export function useFilter(entries: Ref<NoteEntry[]>): FilterState {
 
   const tagMap = computed(() => {
     const map: Record<string, number> = {}
-    entries.value.forEach((e) =>
+    dedupeById(entries.value).forEach((e) =>
       (e.tags || []).forEach((t) => {
         map[t] = (map[t] || 0) + 1
       }),
@@ -136,8 +148,16 @@ export function useFilter(entries: Ref<NoteEntry[]>): FilterState {
 
   const sourceMap = computed(() => {
     const map: Record<string, number> = {}
-    entries.value.forEach((e) => {
+    dedupeById(entries.value).forEach((e) => {
       if (e.source) map[e.source] = (map[e.source] || 0) + 1
+    })
+    return map
+  })
+
+  const folderMap = computed(() => {
+    const map: Record<string, number> = {}
+    dedupeById(entries.value).forEach((e) => {
+      if (e.folder) map[e.folder] = (map[e.folder] || 0) + 1
     })
     return map
   })
@@ -162,10 +182,14 @@ export function useFilter(entries: Ref<NoteEntry[]>): FilterState {
     }
   }
 
+  function setFolder(folder: string | null) {
+    activeFolder.value = folder === '__all__' ? null : folder
+  }
+
   const masteryMap = computed(() => {
     const map: Record<string, number> = {}
     for (const b of MASTERY_LEVEL_DEFS) map[b.label] = 0
-    entries.value.forEach((e) => {
+    dedupeById(entries.value).forEach((e) => {
       const level = getMasteryLevel(e)
       const bucket = MASTERY_LEVEL_DEFS.find((b) => b.level === level)
       if (bucket) map[bucket.label]++
@@ -199,6 +223,7 @@ export function useFilter(entries: Ref<NoteEntry[]>): FilterState {
     activeSubject,
     activeTag,
     activeSource,
+    activeFolder,
     activeMastery,
     searchQuery,
     sortKey,
@@ -207,10 +232,12 @@ export function useFilter(entries: Ref<NoteEntry[]>): FilterState {
     subjectMap,
     tagMap,
     sourceMap,
+    folderMap,
     masteryMap,
     setSubject,
     setTag,
     setSource,
+    setFolder,
     setMastery,
     setSearch,
     setSort,
