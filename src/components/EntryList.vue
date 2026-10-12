@@ -329,7 +329,7 @@ onUnmounted(() => {
           class="text-[10px] px-1.5 py-px rounded-full flex-shrink-0 font-medium"
           :class="
             formatNextReview(entry.nextReviewDate)!.urgent
-              ? 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400'
+              ? 'bg-[#f3e5da] text-[#a96545] dark:bg-[#49372c] dark:text-[#e0b08c]'
               : 'bg-gray-100 dark:bg-[#1e1e1c] text-gray-400 dark:text-brand-mid'
           "
         >

@@ -7,6 +7,15 @@ import { entryRepository, reviewLogRepository } from '@/services/db'
 import type { NoteEntry, ReviewLog } from '@/types'
 import { useDarkMode } from '@/composables/useDarkMode'
 import { useModalAnimations } from '@/composables/useModalAnimations'
+import ReviewAgentEntry from './ReviewAgentEntry.vue'
+import { useDesignExamples } from '@/composables/useDesignExamples'
+
+const { busy: examplesBusy, error: examplesError, create: createExamples } = useDesignExamples()
+const isDevelopment = import.meta.env.DEV
+async function openDesignExamples() {
+  const id = await createExamples()
+  if (id) onEnterNotebook(id)
+}
 
 const emit = defineEmits<{
   enter: [id: string]
@@ -150,6 +159,36 @@ const quotes = [
 const randomQuote = quotes[Math.floor(Math.random() * quotes.length)]
 
 // ── Nav ──
+const planDays = computed(() => {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(today)
+    date.setDate(date.getDate() - 6 + index)
+    const end = new Date(date)
+    end.setDate(end.getDate() + 1)
+    return {
+      label: date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }),
+      count: menuReviewLogs.value.filter(
+        (log) => log.timestamp >= date.getTime() && log.timestamp < end.getTime(),
+      ).length,
+    }
+  })
+})
+const planWeekCount = computed(() => planDays.value.reduce((sum, day) => sum + day.count, 0))
+const planChartMax = computed(() => Math.max(1, ...planDays.value.map((day) => day.count)))
+const planCompletion = computed(() =>
+  totalDue.value ? Math.round((reviewedToday.value / totalDue.value) * 100) : 0,
+)
+const planSubjects = computed(() => {
+  const counts = new Map<string, number>()
+  menuEntries.value.forEach((entry) => {
+    const name = entry.subject || '未分类'
+    counts.set(name, (counts.get(name) || 0) + 1)
+  })
+  return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count)
+})
+
 const activeNav = ref<'home' | 'review' | 'report' | 'plan'>('home')
 
 // ── Search ──
@@ -294,17 +333,17 @@ function onNotebookClick(id: string) {
 <template>
   <!-- @AI-VIEW: DOM 可自由重构。样式仅限 Tailwind CSS 工具类。严禁内联 style 或自定义 CSS。 -->
   <div
-    class="flex h-screen bg-[#faf9f5] dark:bg-[#141413] text-brand-dark dark:text-brand-light font-sans"
+    class="flex h-screen bg-[#faf9f5] dark:bg-[#141413] text-brand-dark dark:text-brand-light font-ui leading-relaxed"
   >
     <!-- ═══════════ LEFT SIDEBAR ═══════════ -->
     <aside
-      class="w-[220px] flex-shrink-0 bg-white dark:bg-[#1e1e1c] border-r border-[#e8e6dc]/50 dark:border-[#2e2e2c]/50 flex flex-col"
+      class="notebook-navigation w-[220px] flex-shrink-0 bg-white dark:bg-[#1e1e1c] flex flex-col"
     >
       <!-- Logo + Nav -->
       <div class="px-5 pt-8 pb-4">
         <div class="flex flex-col gap-1 mb-8">
           <span
-            class="text-[22px] font-bold text-brand-dark dark:text-brand-light font-display tracking-tight leading-none"
+            class="text-[22px] font-bold text-brand-dark dark:text-brand-light font-ui leading-tight"
             >错题本</span
           >
           <span class="block w-8 h-[3px] rounded-full bg-accent" />
@@ -331,7 +370,8 @@ function onNotebookClick(id: string) {
               },
             ]"
             :key="item.id"
-            class="w-full flex items-center gap-2.5 px-3 py-2 rounded-[8px] text-[13px] font-medium transition-colors duration-150"
+            :aria-current="activeNav === item.id ? 'page' : undefined"
+            class="w-full flex items-center gap-2.5 px-3 py-2 rounded-[8px] text-[14px] font-medium transition-colors duration-150"
             :class="
               activeNav === item.id
                 ? 'bg-[#fdf0e8] dark:bg-[#2e2018] text-[#141413] dark:text-[#f0c4a8]'
@@ -365,10 +405,10 @@ function onNotebookClick(id: string) {
       <div class="flex-1 overflow-y-auto px-5 py-4">
         <div class="flex items-center justify-between mb-3">
           <span
-            class="text-[11px] font-semibold text-brand-mid dark:text-brand-mid uppercase tracking-[1px]"
+            class="text-[12px] font-semibold text-brand-mid dark:text-brand-mid uppercase tracking-[1px]"
             >我的错题本</span
           >
-          <span class="text-[10px] text-brand-mid dark:text-brand-mid tabular-nums">{{
+          <span class="text-[12px] text-brand-mid dark:text-brand-mid tabular-nums">{{
             notebooks.length
           }}</span>
         </div>
@@ -378,7 +418,7 @@ function onNotebookClick(id: string) {
             v-for="(nb, idx) in notebooks"
             :key="nb.id"
             draggable="true"
-            class="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-[8px] text-[13px] transition-colors duration-150 group"
+            class="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-[8px] text-[14px] transition-colors duration-150 group"
             :class="
               dragOverIdx === idx
                 ? 'bg-[#fdf0e8]/50 dark:bg-[#2e2018]/50'
@@ -398,7 +438,7 @@ function onNotebookClick(id: string) {
             <span class="flex-1 text-left truncate text-brand-dark dark:text-brand-light-gray">{{
               nb.name
             }}</span>
-            <span class="text-[11px] text-brand-mid dark:text-brand-mid tabular-nums"
+            <span class="text-[12px] text-brand-mid dark:text-brand-mid tabular-nums"
               >{{ entryCountByNotebook[nb.id] || 0 }} · {{ reviewedByNotebook[nb.id] || 0 }}/{{
                 dueByNotebook[nb.id] || 0
               }}</span
@@ -407,7 +447,7 @@ function onNotebookClick(id: string) {
         </div>
 
         <button
-          class="w-full flex items-center gap-2 px-2.5 py-1.5 mt-1 rounded-[8px] text-[13px] text-brand-mid dark:text-brand-mid hover:text-[#d97757] dark:text-[#f0c4a8] hover:bg-[#fdf0e8]/30 dark:hover:bg-[#2e2018]/30 transition-colors duration-150"
+          class="w-full flex items-center gap-2 px-2.5 py-1.5 mt-1 rounded-[8px] text-[14px] text-brand-mid dark:text-brand-mid hover:text-[#d97757] dark:text-[#f0c4a8] hover:bg-[#fdf0e8]/30 dark:hover:bg-[#2e2018]/30 transition-colors duration-150"
           @click="openCreate"
         >
           <svg
@@ -428,7 +468,7 @@ function onNotebookClick(id: string) {
       <!-- Settings -->
       <div class="px-5 py-3 border-t border-[#e8e6dc]/50 dark:border-[#2e2e2c]/50">
         <button
-          class="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-[8px] text-[13px] text-brand-mid dark:text-brand-mid hover:text-brand-dark dark:text-brand-mid hover:bg-[#e8e6dc] dark:hover:bg-[#2a2a28] transition-colors"
+          class="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-[8px] text-[14px] text-brand-mid dark:text-brand-mid hover:text-brand-dark dark:text-brand-mid hover:bg-[#e8e6dc] dark:hover:bg-[#2a2a28] transition-colors"
           @click="emit('open-settings')"
         >
           <svg
@@ -453,7 +493,9 @@ function onNotebookClick(id: string) {
     <main class="flex-1 flex flex-col min-w-0 overflow-y-auto">
       <!-- Top bar -->
       <div class="flex items-center justify-between px-8 py-4">
-        <h1 class="text-[18px] font-semibold text-brand-dark dark:text-brand-light">
+        <h1
+          class="text-[22px] font-ui font-semibold leading-tight text-brand-dark dark:text-brand-light"
+        >
           {{
             activeNav === 'home'
               ? '首页'
@@ -465,6 +507,8 @@ function onNotebookClick(id: string) {
           }}
         </h1>
         <div class="flex items-center gap-3">
+          <button v-if="isDevelopment" class="rounded-lg px-3 py-2 text-xs text-accent" :disabled="examplesBusy" @click="openDesignExamples">{{ examplesBusy ? '正在创建示例…' : '设计示例' }}</button>
+          <span v-if="examplesError" role="alert" class="text-xs text-red-500">{{ examplesError }}</span>
           <div class="relative">
             <svg
               width="15"
@@ -482,7 +526,7 @@ function onNotebookClick(id: string) {
               v-model="searchQuery"
               type="text"
               placeholder="搜索错题…"
-              class="w-[220px] pl-9 pr-3 py-1.5 rounded-[8px] border border-[#e8e6dc] dark:border-[#2e2e2c] text-[13px] text-brand-dark dark:text-brand-light outline-none focus:border-[#d97757] bg-white dark:bg-[#1e1e1c] placeholder-[#888] dark:placeholder-[#aaa] transition-colors"
+              class="w-[220px] pl-9 pr-3 py-1.5 rounded-[8px] border border-[#e8e6dc] dark:border-[#2e2e2c] text-[14px] text-brand-dark dark:text-brand-light outline-none focus:border-[#d97757] bg-white dark:bg-[#1e1e1c] placeholder-[#888] dark:placeholder-[#aaa] transition-colors"
             />
           </div>
         </div>
@@ -503,10 +547,12 @@ function onNotebookClick(id: string) {
                   <path d="M4 6h16M4 10h16M4 14h16M4 18h16" />
                 </svg>
               </div>
-              <div class="text-[28px] font-bold text-brand-dark dark:text-brand-light leading-none">
+              <div
+                class="text-[32px] font-semibold tabular-nums text-brand-dark dark:text-brand-light leading-tight"
+              >
                 {{ notebooks.length }}
               </div>
-              <div class="text-[13px] text-brand-mid dark:text-brand-mid mt-1.5">错题本</div>
+              <div class="text-[14px] text-gray-600 dark:text-gray-300 mt-2">错题本</div>
             </div>
             <div
               class="bg-white dark:bg-[#1e1e1c] rounded-[12px] border border-[#e8e6dc]/50 dark:border-[#2e2e2c]/50 p-5 relative overflow-hidden"
@@ -518,10 +564,12 @@ function onNotebookClick(id: string) {
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                 </svg>
               </div>
-              <div class="text-[28px] font-bold text-brand-dark dark:text-brand-light leading-none">
+              <div
+                class="text-[32px] font-semibold tabular-nums text-brand-dark dark:text-brand-light leading-tight"
+              >
                 {{ totalEntries }}
               </div>
-              <div class="text-[13px] text-brand-mid dark:text-brand-mid mt-1.5">总题数</div>
+              <div class="text-[14px] text-gray-600 dark:text-gray-300 mt-2">总题数</div>
             </div>
             <div
               class="bg-white dark:bg-[#1e1e1c] rounded-[12px] border border-[#e8e6dc]/50 dark:border-[#2e2e2c]/50 p-5 relative overflow-hidden"
@@ -534,10 +582,12 @@ function onNotebookClick(id: string) {
                   <circle cx="12" cy="12" r="3" />
                 </svg>
               </div>
-              <div class="text-[28px] font-bold text-brand-dark dark:text-brand-light leading-none">
+              <div
+                class="text-[32px] font-semibold tabular-nums text-brand-dark dark:text-brand-light leading-tight"
+              >
                 {{ reviewedToday }}/{{ totalDue }}
               </div>
-              <div class="text-[13px] text-brand-mid dark:text-brand-mid mt-1.5">
+              <div class="text-[14px] text-gray-600 dark:text-gray-300 mt-2">
                 今日复习（完成/需复习）
               </div>
             </div>
@@ -559,20 +609,18 @@ function onNotebookClick(id: string) {
                 d="M10 11h-4a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v3a4 4 0 0 1-4 4v-2a2 2 0 0 0 2-2v-1zM20 11h-4a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v3a4 4 0 0 1-4 4v-2a2 2 0 0 0 2-2v-1z"
               />
             </svg>
-            <p
-              class="text-[14px] text-[#141413] dark:text-[#f0c4a8] font-serif italic leading-relaxed"
-            >
+            <p class="text-[14px] text-gray-600 dark:text-gray-300 font-ui leading-relaxed">
               {{ randomQuote }}
             </p>
           </div>
 
           <!-- Notebook table -->
           <div
-            class="bg-white dark:bg-[#1e1e1c] rounded-[12px] border border-[#e8e6dc]/50 dark:border-[#2e2e2c]/50 overflow-hidden"
+            class="bg-white dark:bg-[#1e1e1c] rounded-[12px] border !border-[#c9c3b7] dark:!border-[#625b50] overflow-hidden"
           >
             <!-- Table header -->
             <div
-              class="flex items-center px-5 py-3 text-[12px] font-semibold text-brand-mid dark:text-brand-mid uppercase tracking-[0.5px] border-b border-[#e8e6dc]/50 dark:border-[#2e2e2c]/50"
+              class="flex items-center px-5 py-3 text-[13px] font-medium text-gray-600 dark:text-gray-300 border-b border-[#e8e6dc]/50 dark:border-[#2e2e2c]/50"
             >
               <span class="flex-[2]">名称</span>
               <span class="flex-[1.5]">题数 / 复习进度</span>
@@ -595,21 +643,21 @@ function onNotebookClick(id: string) {
                     :style="{ backgroundColor: dotColor(idx) }"
                   />
                   <span
-                    class="text-[14px] text-brand-dark dark:text-brand-light-gray font-medium truncate group-hover:text-[#d97757] dark:text-[#f0c4a8]"
+                    class="text-[15px] text-brand-dark dark:text-brand-light-gray font-medium truncate group-hover:text-[#d97757] dark:text-[#f0c4a8]"
                     >{{ nb.name }}</span
                   >
                 </div>
-                <span class="flex-[1.5] text-[13px] text-brand-mid dark:text-brand-mid tabular-nums"
+                <span class="flex-[1.5] text-[15px] text-gray-600 dark:text-gray-300 tabular-nums"
                   >{{ entryCountByNotebook[nb.id] || 0 }} 题 ·
                   {{ reviewedByNotebook[nb.id] || 0 }}/{{ dueByNotebook[nb.id] || 0 }}</span
                 >
-                <span class="flex-[1.5] text-[13px] text-brand-mid dark:text-brand-mid">{{
+                <span class="flex-[1.5] text-[15px] text-gray-600 dark:text-gray-300">{{
                   fmtTime(nb.updatedAt)
                 }}</span>
                 <span class="flex-[1]">
                   <span
                     v-if="nb.description"
-                    class="inline-block px-2 py-0.5 rounded-[10px] text-[11px] bg-[#fdf0e8] dark:bg-[#2e2018] text-[#d97757] dark:text-[#f0c4a8] font-medium"
+                    class="inline-block px-2 py-0.5 rounded-[10px] text-[12px] bg-[#fdf0e8] dark:bg-[#2e2018] text-[#d97757] dark:text-[#f0c4a8] font-medium"
                     >{{ shortDesc(nb.description) }}</span
                   >
                 </span>
@@ -655,14 +703,14 @@ function onNotebookClick(id: string) {
             <!-- Empty state -->
             <div
               v-if="notebooks.length === 0"
-              class="px-5 py-12 text-center text-[13px] text-brand-mid dark:text-[#999]"
+              class="px-5 py-12 text-center text-[14px] text-brand-mid dark:text-[#999]"
             >
               还没有错题本，点击下方按钮创建第一个
             </div>
 
             <!-- Add new row -->
             <button
-              class="w-full flex items-center justify-center gap-1.5 px-5 py-3 text-[13px] text-brand-mid dark:text-brand-mid hover:text-[#d97757] dark:text-[#f0c4a8] hover:bg-[#fdf0e8]/20 dark:hover:bg-[#2e2018]/20 border-t border-dashed border-[#e8e6dc]/50 dark:border-[#2e2e2c]/50 transition-colors duration-150"
+              class="w-full flex items-center justify-center gap-1.5 px-5 py-3 text-[14px] text-brand-mid dark:text-brand-mid hover:text-[#d97757] dark:text-[#f0c4a8] hover:bg-[#fdf0e8]/20 dark:hover:bg-[#2e2018]/20 border-t border-dashed border-[#e8e6dc]/50 dark:border-[#2e2e2c]/50 transition-colors duration-150"
               data-testid="create-notebook"
               @click="openCreate"
             >
@@ -691,60 +739,126 @@ function onNotebookClick(id: string) {
           </div>
         </template>
 
-        <!-- PLAN VIEW (placeholder) -->
+        <!-- Review plan overview, using real notebook and review data. -->
         <template v-else-if="activeNav === 'plan'">
-          <div
-            class="bg-white dark:bg-[#1e1e1c] rounded-[12px] border border-[#e8e6dc]/50 dark:border-[#2e2e2c]/50 p-8 text-center text-brand-mid dark:text-brand-mid text-[14px]"
-          >
-            复习计划功能即将上线
+          <div class="review-plan space-y-6">
+            <p class="text-sm text-brand-mid">学习概览 · 回顾复习进度，安排接下来的练习</p>
+            <div class="grid grid-cols-1 gap-6 xl:grid-cols-3">
+              <section class="plan-card rounded-xl bg-white p-6">
+                <h2 class="text-sm text-brand-mid">今日完成率</h2>
+                <p class="my-3 text-4xl font-semibold">{{ planCompletion }}%</p>
+                <div class="h-2 overflow-hidden rounded-full bg-brand-light-gray">
+                  <div
+                    class="h-full rounded-full bg-accent"
+                    :style="{ width: planCompletion + '%' }"
+                  />
+                </div>
+                <p class="mt-3 text-xs text-brand-mid">
+                  已完成 {{ reviewedToday }} 次 · 待复习 {{ stillDue }} 道
+                </p>
+              </section>
+              <section class="plan-card rounded-xl bg-white p-6">
+                <h2 class="text-sm text-brand-mid">待复习</h2>
+                <p class="my-3 text-4xl font-semibold">
+                  {{ stillDue }} <span class="text-sm font-normal">道</span>
+                </p>
+                <button class="rounded-lg px-3 py-2 text-sm" @click="activeNav = 'review'">
+                  开始今日复习 →
+                </button>
+              </section>
+              <section class="plan-card rounded-xl bg-white p-6">
+                <h2 class="text-sm text-brand-mid">近 7 天复习</h2>
+                <p class="my-3 text-4xl font-semibold">
+                  {{ planWeekCount }} <span class="text-sm font-normal">次</span>
+                </p>
+                <p class="text-xs text-brand-mid">
+                  共 {{ totalEntries }} 道错题 · {{ notebooks.length }} 本错题本
+                </p>
+              </section>
+            </div>
+            <div class="grid grid-cols-1 gap-6 xl:grid-cols-2">
+              <section class="plan-card rounded-xl bg-white p-6">
+                <h2 class="font-semibold">近 7 天复习分布</h2>
+                <div class="mt-6 flex h-44 items-end gap-3">
+                  <div
+                    v-for="day in planDays"
+                    :key="day.label"
+                    class="flex h-full min-w-0 flex-1 flex-col items-center justify-end gap-2"
+                  >
+                    <span class="text-xs text-brand-mid">{{ day.count }}</span>
+                    <div
+                      class="w-full rounded-t-lg bg-accent/70"
+                      :style="{ height: (day.count / planChartMax) * 110 + 'px' }"
+                    />
+                    <span class="text-xs text-brand-mid">{{ day.label }}</span>
+                  </div>
+                </div>
+                <p v-if="!planWeekCount" class="mt-4 text-sm text-brand-mid">
+                  还没有复习记录，完成复习后会显示在这里。
+                </p>
+              </section>
+              <section class="plan-card rounded-xl bg-white p-6">
+                <h2 class="font-semibold">学科分布</h2>
+                <div
+                  v-for="subject in planSubjects"
+                  :key="subject.name"
+                  class="flex items-center justify-between border-b border-brand-light-gray py-4 text-sm"
+                >
+                  <span>{{ subject.name }}</span
+                  ><span class="text-brand-mid">{{ subject.count }} 道</span>
+                </div>
+                <p v-if="!planSubjects.length" class="mt-6 text-sm text-brand-mid">
+                  添加错题后显示学科分布。
+                </p>
+              </section>
+              <section class="plan-card rounded-xl bg-white p-6">
+                <h2 class="font-semibold">复习重点</h2>
+                <p class="mt-4 text-sm text-brand-mid">
+                  {{
+                    stillDue
+                      ? '优先回顾已到期的错题，再练习其他内容。'
+                      : '当前没有到期错题，可以进入错题本自由复习。'
+                  }}
+                </p>
+                <div class="mt-5 rounded-xl bg-accent/10 p-4 text-sm">
+                  今日已完成 {{ reviewedToday }} 次复习，尚有 {{ stillDue }} 道到期题目。
+                </div>
+                <button class="mt-5 rounded-lg px-3 py-2 text-sm" @click="activeNav = 'review'">
+                  选择错题本 →
+                </button>
+              </section>
+              <section class="plan-card rounded-xl bg-white p-6">
+                <h2 class="font-semibold">今日复习安排</h2>
+                <div
+                  v-for="nb in notebooks"
+                  :key="nb.id"
+                  class="flex items-center justify-between gap-3 border-b border-brand-light-gray py-4"
+                >
+                  <div class="min-w-0">
+                    <p class="truncate text-sm">{{ nb.name }}</p>
+                    <p class="mt-1 text-xs text-brand-mid">
+                      已复习 {{ reviewedByNotebook[nb.id] || 0 }} 次 · 待复习
+                      {{ stillDueByNotebook[nb.id] || 0 }} 道
+                    </p>
+                  </div>
+                  <button
+                    class="shrink-0 rounded-lg px-3 py-2 text-sm"
+                    @click="onEnterNotebook(nb.id)"
+                  >
+                    打开 →
+                  </button>
+                </div>
+                <p v-if="!notebooks.length" class="mt-6 text-sm text-brand-mid">
+                  先创建一本错题本，开始积累。
+                </p>
+              </section>
+            </div>
           </div>
         </template>
 
-        <!-- REVIEW VIEW (placeholder) -->
+        <!-- Review Agent entrance -->
         <template v-else-if="activeNav === 'review'">
-          <div
-            class="bg-white dark:bg-[#1e1e1c] rounded-[12px] border border-[#e8e6dc]/50 dark:border-[#2e2e2c]/50 p-8"
-          >
-            <h3 class="text-[15px] font-semibold text-brand-dark dark:text-brand-light mb-4">
-              选择要复习的错题本
-            </h3>
-            <div class="space-y-2">
-              <button
-                v-for="(nb, idx) in notebooks"
-                :key="nb.id"
-                class="w-full flex items-center gap-3 px-4 py-3 rounded-[10px] border border-[#e8e6dc]/50 dark:border-[#2e2e2c]/50 hover:border-[#d97757] hover:bg-[#fdf0e8]/10 dark:hover:bg-[#2e2018]/10 transition-colors text-left"
-                @click="onEnterNotebook(nb.id)"
-              >
-                <span
-                  class="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                  :style="{ backgroundColor: dotColor(idx) }"
-                />
-                <span class="flex-1 text-[14px] text-brand-dark dark:text-brand-light-gray">{{
-                  nb.name
-                }}</span>
-                <span class="text-[12px] text-brand-mid dark:text-brand-mid"
-                  >{{ entryCountByNotebook[nb.id] || 0 }} 题 ·
-                  {{ reviewedByNotebook[nb.id] || 0 }}/{{ dueByNotebook[nb.id] || 0 }}</span
-                >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  :stroke="isDark ? '#f0c4a8' : '#d97757'"
-                  stroke-width="2"
-                >
-                  <polyline points="9 18 15 12 9 6" />
-                </svg>
-              </button>
-              <div
-                v-if="notebooks.length === 0"
-                class="text-center text-brand-mid dark:text-brand-mid text-[13px] py-8"
-              >
-                还没有错题本
-              </div>
-            </div>
-          </div>
+          <ReviewAgentEntry />
         </template>
       </div>
     </main>

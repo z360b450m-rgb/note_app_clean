@@ -72,3 +72,11 @@ assets/
 /icon-512.png
 /icon.svg
 /manifest.json
+
+# Local document/presentation generation artifacts
+/.codex-*/
+/output/
+/tmp/
+/.chart-data-*/
+/.docx-approval/
+/design-examples-preview.png

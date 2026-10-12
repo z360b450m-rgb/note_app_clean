@@ -544,13 +544,16 @@ export function useEntries(getNotebookId: () => string) {
   }
 
   // Call this on every content mutation — marks dirty, does NOT save to DB
+  let editRevision = 0
   function markDirty() {
+    editRevision++
     isDirty.value = true
     startSnapshotTimer()
   }
 
   // Manual save — persists to DB, clears dirty flag, removes snapshot
-  async function saveEntry(): Promise<boolean> {
+  async function saveEntry(silent = false): Promise<boolean> {
+    const savedRevision = editRevision
     const savedEntryId = activeId.value
     if (!savedEntryId) return false
     const entry = entries.value.find((e) => e.id === savedEntryId)
@@ -576,8 +579,8 @@ export function useEntries(getNotebookId: () => string) {
     } catch {
       /* ok if missing */
     }
-    if (activeId.value === savedEntryId) isDirty.value = false
-    showToast('已保存')
+    if (activeId.value === savedEntryId && editRevision === savedRevision) isDirty.value = false
+    if (!silent) showToast('已保存')
     return true
   }
 

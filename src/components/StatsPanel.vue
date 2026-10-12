@@ -13,12 +13,15 @@ const emit = defineEmits<{
   close: []
 }>()
 
-const hueStep = computed(() => {
-  const n = props.stats.subjectBars.value.length || 1
-  return 360 / n
-})
+const overviewMetrics = computed(() => [
+  { label: '总错题数', value: props.stats.totalCount.value, path: 'm12 3 9 5-9 5-9-5 9-5M3 12l9 5 9-5M3 16l9 5 9-5' },
+  { label: '待复习', value: props.stats.dueCount.value, path: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 7v5l3 2' },
+  { label: '今日已复习', value: props.stats.reviewedToday.value, path: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18m-4 9 3 3 5-6' },
+  { label: '累计复习', value: props.stats.totalReviews.value, path: 'M3 10a9 9 0 1 1 2 8M3 4v6h6' },
+])
 
 const historyScope = ref<'due' | 'all'>('due')
+const masteredBucket = computed(() => props.stats.masteryBuckets.value.find((bucket) => bucket.label === '已掌握'))
 const selectedSession = ref<ReviewHistorySession | null>(null)
 const selectedSessionScope = ref<'due' | 'all'>('due')
 const activeHistory = computed(() =>
@@ -58,7 +61,7 @@ function formatDuration(ms: number): string {
 
     <!-- Panel -->
     <div
-      class="fixed right-0 top-0 bottom-0 z-50 w-[340px] bg-white dark:bg-[#141413] shadow-xl border-l border-gray-100 dark:border-[#2e2e2c] overflow-y-auto"
+      class="stats-grouped-panel fixed right-0 top-0 bottom-0 z-50 w-[340px] bg-white dark:bg-[#141413] shadow-xl border-l border-gray-100 dark:border-[#2e2e2c] overflow-y-auto"
     >
       <!-- Header -->
       <div
@@ -100,34 +103,16 @@ function formatDuration(ms: number): string {
       </div>
 
       <div class="p-5 space-y-6">
-        <!-- Overview cards -->
-        <div class="grid grid-cols-2 gap-3">
-          <div class="bg-blue-50 dark:bg-blue-950 rounded-xl shadow-sm p-3.5">
-            <div class="text-[11px] text-blue-500 font-medium mb-0.5">总错题数</div>
-            <div class="text-2xl font-bold text-blue-700 dark:text-blue-300 tabular-nums">
-              {{ stats.totalCount.value }}
-            </div>
-          </div>
-          <div class="bg-amber-50 dark:bg-amber-950 rounded-xl shadow-sm p-3.5">
-            <div class="text-[11px] text-amber-500 font-medium mb-0.5">待复习</div>
-            <div class="text-2xl font-bold text-amber-700 dark:text-amber-300 tabular-nums">
-              {{ stats.dueCount.value }}
-            </div>
-          </div>
-          <div class="bg-green-50 dark:bg-green-950 rounded-xl shadow-sm p-3.5">
-            <div class="text-[11px] text-green-500 font-medium mb-0.5">今日已复习</div>
-            <div class="text-2xl font-bold text-green-700 dark:text-green-300 tabular-nums">
-              {{ stats.reviewedToday.value }}
-            </div>
-          </div>
-          <div class="bg-purple-50 dark:bg-purple-950 rounded-xl shadow-sm p-3.5">
-            <div class="text-[11px] text-purple-500 font-medium mb-0.5">累计复习</div>
-            <div class="text-2xl font-bold text-purple-700 dark:text-purple-300 tabular-nums">
-              {{ stats.totalReviews.value }}
-            </div>
+        <!-- Grouped overview -->
+        <div class="stats-overview">
+          <div v-for="metric in overviewMetrics" :key="metric.label" class="stats-metric">
+            <span class="stats-metric-icon" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path :d="metric.path" /></svg>
+            </span>
+            <span>{{ metric.label }}</span>
+            <strong class="tabular-nums">{{ metric.value }}</strong>
           </div>
         </div>
-
         <!-- Subject distribution -->
         <div>
           <h3
@@ -143,7 +128,7 @@ function formatDuration(ms: number): string {
           </div>
           <div v-else class="space-y-2">
             <div
-              v-for="(item, i) in stats.subjectBars.value"
+              v-for="item in stats.subjectBars.value"
               :key="item.name"
               class="flex items-center gap-2"
             >
@@ -153,12 +138,12 @@ function formatDuration(ms: number): string {
               >
                 {{ item.name }}
               </span>
-              <div class="flex-1 h-5 bg-gray-100 dark:bg-[#1e1e1c] rounded-md overflow-hidden">
+              <div class="stats-track flex-1 h-1.5 bg-gray-100 dark:bg-[#1e1e1c] rounded-md overflow-hidden">
                 <div
                   class="h-full rounded-md transition-all duration-500"
                   :style="{
                     width: item.pct + '%',
-                    backgroundColor: `hsl(${i * hueStep}, 55%, 55%)`,
+                    backgroundColor: 'var(--neo-accent)',
                   }"
                 />
               </div>
@@ -177,19 +162,19 @@ function formatDuration(ms: number): string {
           >
             近7天复习
           </h3>
-          <div class="flex items-end justify-between gap-1.5 h-24 px-1">
+          <div class="stats-week flex items-end justify-between gap-1.5 px-1" :class="{ 'stats-week-empty': stats.weeklyActivity.value.every((day) => day.count === 0) }">
             <div
               v-for="(day, i) in stats.weeklyActivity.value"
               :key="i"
               class="flex-1 flex flex-col items-center gap-1.5"
             >
-              <div class="w-full flex items-end justify-center h-16">
+              <span class="stats-day-count">{{ day.count }}</span><div class="stats-day-bar w-full flex items-end justify-center h-16">
                 <div
                   class="w-full max-w-[28px] rounded-t-md transition-all duration-500"
                   :class="day.count > 0 ? 'bg-accent' : 'bg-gray-150'"
                   :style="{
                     height: day.max > 0 ? Math.max(4, (day.count / day.max) * 100) + '%' : '4px',
-                    backgroundColor: day.count > 0 ? undefined : '#e5e7eb',
+                    backgroundColor: day.count > 0 ? undefined : 'var(--neo-line)',
                   }"
                 />
               </div>
@@ -205,6 +190,15 @@ function formatDuration(ms: number): string {
           >
             掌握程度
           </h3>
+          <div v-if="stats.totalCount.value > 0" class="stats-mastery-summary">
+            <div class="stats-mastery-ring" :style="{ background: `conic-gradient(var(--neo-accent) ${(masteredBucket?.pct ?? 0) * 3.6}deg, var(--neo-line) 0deg)` }">
+              <span>{{ masteredBucket?.pct ?? 0 }}%</span>
+            </div>
+            <div>
+              <div class="text-sm">已掌握 {{ masteredBucket?.count ?? 0 }} / {{ stats.totalCount.value }} 题</div>
+              <div class="text-xs text-gray-500 dark:text-brand-mid">复习进度</div>
+            </div>
+          </div>
           <div
             v-if="stats.masteryBuckets.value.every((b) => b.count === 0)"
             class="text-[12px] text-gray-400 dark:text-brand-mid text-center py-4"
@@ -213,7 +207,7 @@ function formatDuration(ms: number): string {
           </div>
           <div v-else class="space-y-2">
             <div
-              v-for="bucket in stats.masteryBuckets.value"
+              v-for="bucket in stats.masteryBuckets.value.filter((item) => item.count > 0)"
               :key="bucket.label"
               class="flex items-center gap-2"
             >
@@ -222,7 +216,7 @@ function formatDuration(ms: number): string {
               >
                 {{ bucket.label }}
               </span>
-              <div class="flex-1 h-4 bg-gray-100 dark:bg-[#1e1e1c] rounded-full overflow-hidden">
+              <div class="stats-track flex-1 h-1.5 bg-gray-100 dark:bg-[#1e1e1c] rounded-full overflow-hidden">
                 <div
                   class="h-full rounded-full transition-all duration-500"
                   :style="{ width: bucket.pct + '%', backgroundColor: bucket.color }"

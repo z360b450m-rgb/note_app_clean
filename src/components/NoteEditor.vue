@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useEditorPreferences } from '@/composables/useEditorPreferences'
+const { preferences: editorPreferences } = useEditorPreferences()
 // @AI-NOTE: 编辑器组件 —— 数据读写通过 useEntries/useDrawing Hook。
 // 禁止直接操作数据库、实现 SRS 算法、管理条目生命周期。
 import { ref, computed, watch, onUnmounted, nextTick, inject, type Ref } from 'vue'
@@ -15,7 +17,6 @@ import QuestionGroupConfirmModal from './QuestionGroupConfirmModal.vue'
 import QuestionLinkModal from './QuestionLinkModal.vue'
 import { saveImage, toDisplayHtml, toStorageHtml } from '@/services/imageStorage'
 import { useRichTextSizing } from '@/composables/useRichTextSizing'
-import { usePanelFontSize } from '@/composables/usePanelFontSize'
 import { pastePlainText } from '@/utils/plainTextPaste'
 import { decorateInternalLinks } from '@/utils/internalLinks'
 // import { useKnowledgeBases } from '@/composables/useKnowledgeBases'
@@ -46,6 +47,7 @@ const emit = defineEmits<{
 }>()
 
 function onBlur() {
+  if (!editorPreferences.value.autoSave) return
   emit('blur-save')
 }
 
@@ -81,24 +83,15 @@ const editorLayoutEl = ref<HTMLDivElement | null>(null)
 let suppressInput = false
 
 const {
-  fontSize: questionFontSize,
-  fontSizeStyle: questionFontSizeStyle,
-  setFontSize: setQuestionFontSize,
-} = usePanelFontSize('question')
-const {
-  fontSize: materialFontSize,
-  fontSizeStyle: materialFontSizeStyle,
-  setFontSize: setMaterialFontSize,
-} = usePanelFontSize('material')
-
-const {
   hasSelectedImage: questionImageSelected,
   imageWidth: questionImageWidth,
   hasTextSelection: questionTextSelected,
   isBold: questionIsBold,
+  boldMixed: questionBoldMixed,
+  highlightColor: questionHighlightColor,
   captureSelection: captureQuestionSelection,
   handleEditorClick: handleQuestionEditorClick,
-  applyFontSize: applyQuestionFontSize,
+
   toggleBold: toggleQuestionBold,
   applyHighlight: applyQuestionHighlight,
   applyImageWidth: applyQuestionImageWidth,
@@ -109,7 +102,6 @@ const {
 } = useRichTextSizing(
   () => questionBody.value,
   onQuestionInput,
-  setQuestionFontSize,
   (targetId) => openQuestionLinkModal('question', targetId),
 )
 
@@ -118,9 +110,11 @@ const {
   imageWidth: materialImageWidth,
   hasTextSelection: materialTextSelected,
   isBold: materialIsBold,
+  boldMixed: materialBoldMixed,
+  highlightColor: materialHighlightColor,
   captureSelection: captureMaterialSelection,
   handleEditorClick: handleMaterialEditorClick,
-  applyFontSize: applyMaterialFontSize,
+
   toggleBold: toggleMaterialBold,
   applyHighlight: applyMaterialHighlight,
   applyImageWidth: applyMaterialImageWidth,
@@ -131,7 +125,6 @@ const {
 } = useRichTextSizing(
   () => materialBody.value,
   onMaterialInput,
-  setMaterialFontSize,
   (targetId) => openQuestionLinkModal('material', targetId),
 )
 
@@ -411,6 +404,7 @@ interface PersistedPanelLayout {
   primaryColumnRatio: number
   primaryRowRatio: number
   secondaryColumnRatio: number
+  customRowHeight?: boolean
 }
 
 const PANEL_LAYOUT_KEY = 'cuotiben:panel-layout:v1'
@@ -422,6 +416,9 @@ const groupPanelOrder = ref<PanelId[]>([...DEFAULT_GROUP_ORDER])
 const primaryColumnRatio = ref(0.42)
 const primaryRowRatio = ref(0.46)
 const secondaryColumnRatio = ref(0.5)
+const answersCollapsed = ref(false)
+const questionExpanded = ref(false)
+const customRowHeight = ref(false)
 const draggingPanel = ref<PanelId | null>(null)
 const dragOverPanel = ref<PanelId | null>(null)
 
@@ -453,7 +450,8 @@ function loadPanelLayout() {
     singlePanelOrder.value = normalizePanelOrder(saved.singleOrder, DEFAULT_SINGLE_ORDER)
     groupPanelOrder.value = normalizePanelOrder(saved.groupOrder, DEFAULT_GROUP_ORDER)
     primaryColumnRatio.value = clampRatio(saved.primaryColumnRatio, 0.42, 0.28, 0.58)
-    primaryRowRatio.value = clampRatio(saved.primaryRowRatio, 0.46, 0.28, 0.68)
+    primaryRowRatio.value = clampRatio(saved.primaryRowRatio, 0.46, 0.14, 0.68)
+    customRowHeight.value = saved.customRowHeight === true
     secondaryColumnRatio.value = clampRatio(saved.secondaryColumnRatio, 0.5, 0.28, 0.72)
   } catch {
     // Ignore malformed legacy layout data and keep the defaults.
@@ -468,6 +466,7 @@ function persistPanelLayout() {
     primaryColumnRatio: primaryColumnRatio.value,
     primaryRowRatio: primaryRowRatio.value,
     secondaryColumnRatio: secondaryColumnRatio.value,
+    customRowHeight: customRowHeight.value,
   }
   localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify(state))
 }
@@ -478,9 +477,21 @@ const activePanelOrder = computed(() =>
   props.group ? groupPanelOrder.value : singlePanelOrder.value,
 )
 
+const compactQuestion = computed(() => !props.group && activePanelOrder.value[0] === 'question')
+
+function toggleQuestionHeight() {
+  answersCollapsed.value = !answersCollapsed.value
+  customRowHeight.value = false
+  persistPanelLayout()
+  nextTick(resizeCanvas)
+}
+
 const panelLayoutStyle = computed(() => ({
   '--primary-column': `${primaryColumnRatio.value * 100}%`,
-  '--primary-row': `${primaryRowRatio.value * 100}%`,
+  '--primary-row':
+    compactQuestion.value && !customRowHeight.value
+      ? 'calc(60% - 4.8px)'
+      : `${primaryRowRatio.value * 100}%`,
   '--secondary-left': `${secondaryColumnRatio.value}fr`,
   '--secondary-right': `${1 - secondaryColumnRatio.value}fr`,
 }))
@@ -598,6 +609,8 @@ function resetPanelLayout() {
   primaryColumnRatio.value = 0.42
   primaryRowRatio.value = 0.46
   secondaryColumnRatio.value = 0.5
+  customRowHeight.value = false
+  questionExpanded.value = false
   persistPanelLayout()
   nextTick(resizeCanvas)
 }
@@ -613,8 +626,13 @@ interface PanelResizeState {
 let panelResizeState: PanelResizeState | null = null
 
 function startPanelResize(e: MouseEvent, type: PanelResizeType) {
-  if (layoutLocked.value || !editorLayoutEl.value) return
+  if (!editorLayoutEl.value) return
   e.preventDefault()
+  if (type === 'primary-row' && compactQuestion.value && !customRowHeight.value) {
+    const rowHeight = parseFloat(getComputedStyle(editorLayoutEl.value).gridTemplateRows)
+    primaryRowRatio.value = rowHeight / Math.max(1, editorLayoutEl.value.clientHeight)
+    customRowHeight.value = true
+  }
   const axis: 'x' | 'y' = type === 'primary-row' ? 'y' : 'x'
   const startRatio =
     type === 'primary-column'
@@ -645,7 +663,7 @@ function resizePanels(e: MouseEvent) {
   if (state.type === 'primary-column') {
     primaryColumnRatio.value = clampRatio(nextRatio, 0.42, 0.28, 0.58)
   } else if (state.type === 'primary-row') {
-    primaryRowRatio.value = clampRatio(nextRatio, 0.46, 0.28, 0.68)
+    primaryRowRatio.value = clampRatio(nextRatio, 0.46, props.group ? 0.28 : 0.14, 0.68)
   } else secondaryColumnRatio.value = clampRatio(nextRatio, 0.5, 0.28, 0.72)
 
   resizeCanvas()
@@ -773,9 +791,11 @@ function onQuestionWheel(e: WheelEvent) {
 
 <template>
   <!-- @AI-VIEW: DOM 可自由重构。样式仅限 Tailwind CSS 工具类。严禁内联 style 或自定义 CSS。 -->
-  <div class="flex-1 flex flex-col overflow-hidden overscroll-contain p-4 gap-3">
+  <div
+    class="compact-note-editor flex-1 min-h-0 flex flex-col overflow-hidden overscroll-contain p-3 gap-2"
+  >
     <!-- Meta row -->
-    <div class="flex items-center gap-2.5 px-1 flex-wrap">
+    <div class="editor-metadata-row flex items-center gap-2.5 px-1 flex-wrap">
       <!-- Subject select -->
       <div class="relative w-[130px]">
         <select
@@ -847,22 +867,27 @@ function onQuestionWheel(e: WheelEvent) {
 
       <div
         v-show="!drawingEnabled"
-        class="ml-auto flex min-h-10 items-center gap-2 rounded-xl border border-gray-100 bg-gray-50/70 px-2 py-1 dark:border-[#2e2e2c] dark:bg-[#1a1a18]"
+        class="editor-formatting-group ml-auto flex min-h-10 items-center gap-2 rounded-xl border border-gray-100 bg-gray-50/70 px-2 py-1 dark:border-[#2e2e2c] dark:bg-[#1a1a18]"
         title="格式设置作用于当前编辑框"
       >
         <span class="shrink-0 text-xs font-semibold text-gray-400 dark:text-brand-mid">
           {{ activeFormattingLabel }}
         </span>
+        <div
+          id="shared-image-tools"
+          class="button-tray flex items-center"
+          aria-label="当前编辑区图片工具"
+        />
         <div id="rich-text-formatting-toolbar" class="flex min-h-8 items-center">
           <RichTextSizeControls
             v-if="activeFormattingPanel === 'question'"
             :image-selected="questionImageSelected"
             :image-width="questionImageWidth"
-            :font-size="questionFontSize"
             :text-selected="questionTextSelected"
             :bold="questionIsBold"
+            :bold-mixed="questionBoldMixed"
+            :highlight-color="questionHighlightColor"
             @preserve-selection="captureQuestionSelection"
-            @font-size="applyQuestionFontSize"
             @toggle-bold="toggleQuestionBold"
             @highlight="applyQuestionHighlight"
             @image-width="applyQuestionImageWidth"
@@ -872,11 +897,11 @@ function onQuestionWheel(e: WheelEvent) {
             v-else-if="activeFormattingPanel === 'material' && group"
             :image-selected="materialImageSelected"
             :image-width="materialImageWidth"
-            :font-size="materialFontSize"
             :text-selected="materialTextSelected"
             :bold="materialIsBold"
+            :bold-mixed="materialBoldMixed"
+            :highlight-color="materialHighlightColor"
             @preserve-selection="captureMaterialSelection"
-            @font-size="applyMaterialFontSize"
             @toggle-bold="toggleMaterialBold"
             @highlight="applyMaterialHighlight"
             @image-width="applyMaterialImageWidth"
@@ -885,13 +910,19 @@ function onQuestionWheel(e: WheelEvent) {
         </div>
       </div>
 
-      <div class="flex items-center gap-2">
-        <span
-          v-if="!layoutLocked"
-          class="hidden text-xs font-medium text-amber-600 dark:text-amber-300 xl:inline"
+      <div class="button-tray layout-action-group flex items-center gap-2">
+        <button
+          v-if="compactQuestion"
+          data-testid="question-height-toggle"
+          class="rounded-lg px-3 py-1.5 text-xs text-gray-600 dark:text-brand-light-gray"
+          :aria-expanded="!answersCollapsed"
+          @click="toggleQuestionHeight"
         >
-          拖动板块手柄换位，拖动分隔线调整大小
-        </span>
+          {{ answersCollapsed ? '展开答案' : '收起答案' }}
+        </button>
+        <span v-if="!layoutLocked" class="layout-edit-hint"
+          >拖动板块手柄换位，拖动分隔线调整大小</span
+        >
         <button
           v-if="!layoutLocked"
           data-testid="panel-layout-reset"
@@ -981,7 +1012,11 @@ function onQuestionWheel(e: WheelEvent) {
     <div
       ref="editorLayoutEl"
       class="editor-layout flex-1 min-h-0 grid overflow-y-auto lg:overflow-hidden"
-      :class="{ 'has-group': group, 'layout-editing': !layoutLocked }"
+      :class="{
+        'has-group': group,
+        'layout-editing': !layoutLocked,
+        'answers-collapsed': answersCollapsed && compactQuestion,
+      }"
       :style="panelLayoutStyle"
     >
       <section
@@ -1005,7 +1040,7 @@ function onQuestionWheel(e: WheelEvent) {
             一拖 {{ groupEntries?.length || 1 }}
           </span>
           <button
-            v-if="!layoutLocked"
+            v-show="!layoutLocked"
             class="panel-drag-button"
             title="拖动公共材料板块换位"
             aria-label="拖动公共材料板块换位"
@@ -1014,25 +1049,29 @@ function onQuestionWheel(e: WheelEvent) {
           >
             ⠿ 拖动
           </button>
-          <div v-if="!drawingEnabled" class="ml-auto flex items-center gap-0.5">
-            <button class="editor-tool" title="截屏" @click="openScreenshot('material')">▧</button>
-            <button class="editor-tool" title="拍照" @click="openCamera('material')">◎</button>
-            <button class="editor-tool" title="导入图片" @click="openMaterialFilePicker">＋</button>
-            <input
-              ref="materialFileInput"
-              type="file"
-              accept="image/*"
-              class="hidden"
-              @change="onMaterialFileChange"
-            />
-          </div>
+          <Teleport defer to="#shared-image-tools"
+            ><div v-show="activeFormattingPanel === 'material'" class="flex items-center gap-1">
+              <button class="editor-tool" title="截屏" @click="openScreenshot('material')">
+                ▧
+              </button>
+              <button class="editor-tool" title="拍照" @click="openCamera('material')">◎</button>
+              <button class="editor-tool" title="导入图片" @click="openMaterialFilePicker">
+                ＋
+              </button>
+              <input
+                ref="materialFileInput"
+                type="file"
+                accept="image/*"
+                class="hidden"
+                @change="onMaterialFileChange"
+              /></div
+          ></Teleport>
         </div>
         <div class="flex-1 min-h-0 overflow-y-auto overscroll-contain" @wheel="onQuestionWheel">
           <div ref="materialContentRef" class="relative min-h-full">
             <div
               ref="materialBody"
               class="panel-body px-4 py-3 text-base leading-relaxed md-content outline-none min-h-full"
-              :style="{ fontSize: materialFontSizeStyle }"
               :contenteditable="drawingEnabled ? 'false' : 'true'"
               data-placeholder="在这里输入所有小题共用的材料、图表或题干…"
               @input="onMaterialInput"
@@ -1049,7 +1088,7 @@ function onQuestionWheel(e: WheelEvent) {
       </section>
 
       <div
-        v-if="group && !layoutLocked"
+        v-if="group"
         data-testid="panel-resizer-primary-column"
         class="panel-resizer panel-resizer-v panel-resizer-primary-column"
         role="separator"
@@ -1079,7 +1118,7 @@ function onQuestionWheel(e: WheelEvent) {
           题目
 
           <button
-            v-if="!layoutLocked"
+            v-show="!layoutLocked"
             class="panel-drag-button"
             title="拖动题目板块换位"
             aria-label="拖动题目板块换位"
@@ -1118,9 +1157,77 @@ function onQuestionWheel(e: WheelEvent) {
               ＋ 添加小题
             </button>
           </div>
+
+          <!-- Panel-specific image insertion tools -->
+          <Teleport defer to="#shared-image-tools"
+            ><div v-show="activeFormattingPanel === 'question'" class="flex items-center gap-1">
+              <button
+                class="w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-gray-600 dark:text-brand-mid dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/5 transition-all active:scale-90"
+                title="截屏"
+                @click="openScreenshot('question')"
+              >
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <rect x="2" y="2" width="20" height="20" rx="2" ry="2" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <polyline points="21 15 16 10 5 21" />
+                </svg>
+              </button>
+              <button
+                class="w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-gray-600 dark:text-brand-mid dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/5 transition-all active:scale-90"
+                title="拍照"
+                @click="openCamera('question')"
+              >
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <path
+                    d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
+                  />
+                  <circle cx="12" cy="13" r="4" />
+                </svg>
+              </button>
+              <button
+                class="w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-gray-600 dark:text-brand-mid dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/5 transition-all active:scale-90"
+                title="导入图片"
+                @click="openQuestionFilePicker"
+              >
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                  <circle cx="8.5" cy="8.5" r="1.5" />
+                  <polyline points="21 15 16 10 5 21" />
+                </svg>
+              </button>
+              <input
+                ref="qFileInput"
+                type="file"
+                accept="image/*"
+                class="hidden"
+                @change="onQuestionFileChange"
+              /></div
+          ></Teleport>
           <button
-            v-else
-            class="ml-2 inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[#bd5c3d] bg-[#d97757] px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-all hover:-translate-y-px hover:bg-[#c96849] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d97757]/45 focus-visible:ring-offset-2 active:translate-y-0 active:shadow-sm dark:border-[#e18a6d] dark:bg-[#c96849] dark:hover:bg-[#d97757] dark:focus-visible:ring-offset-[#141413]"
+            v-if="!group"
+            type="button"
+            class="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium text-gray-500 transition-colors hover:bg-accent/10 hover:text-accent dark:text-brand-mid"
             title="将当前题目转换为包含公共材料和多个小题的题组"
             @click="requestQuestionGroupConversion"
           >
@@ -1140,74 +1247,8 @@ function onQuestionWheel(e: WheelEvent) {
               <rect x="8.5" y="14" width="7" height="6" rx="1" />
               <path d="M6.5 10v2h11v-2M12 12v2" />
             </svg>
-            转为一拖 N 题组
+            转为题组
           </button>
-
-          <!-- Panel-specific image insertion tools -->
-          <div v-if="!drawingEnabled" class="ml-auto flex items-center gap-0.5">
-            <button
-              class="w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-gray-600 dark:text-brand-mid dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/5 transition-all active:scale-90"
-              title="截屏"
-              @click="openScreenshot('question')"
-            >
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <rect x="2" y="2" width="20" height="20" rx="2" ry="2" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <polyline points="21 15 16 10 5 21" />
-              </svg>
-            </button>
-            <button
-              class="w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-gray-600 dark:text-brand-mid dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/5 transition-all active:scale-90"
-              title="拍照"
-              @click="openCamera('question')"
-            >
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path
-                  d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
-                />
-                <circle cx="12" cy="13" r="4" />
-              </svg>
-            </button>
-            <button
-              class="w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-gray-600 dark:text-brand-mid dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/5 transition-all active:scale-90"
-              title="导入图片"
-              @click="openQuestionFilePicker"
-            >
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <polyline points="21 15 16 10 5 21" />
-              </svg>
-            </button>
-            <input
-              ref="qFileInput"
-              type="file"
-              accept="image/*"
-              class="hidden"
-              @change="onQuestionFileChange"
-            />
-          </div>
         </div>
         <div class="flex-1 overflow-y-auto overscroll-contain" @wheel="onQuestionWheel">
           <div ref="questionContentRef" :style="{ position: 'relative', minHeight: '100%' }">
@@ -1215,7 +1256,6 @@ function onQuestionWheel(e: WheelEvent) {
               <div
                 ref="questionBody"
                 class="panel-body px-3.5 py-3 text-base leading-relaxed md-content outline-none min-h-full"
-                :style="{ fontSize: questionFontSizeStyle }"
                 :contenteditable="drawingEnabled ? 'false' : 'true'"
                 data-placeholder="在此输入当前小题…"
                 @input="onQuestionInput"
@@ -1233,7 +1273,6 @@ function onQuestionWheel(e: WheelEvent) {
       </div>
 
       <div
-        v-if="!layoutLocked"
         data-testid="panel-resizer-primary-row"
         class="panel-resizer panel-resizer-h panel-resizer-primary-row"
         role="separator"
@@ -1275,7 +1314,6 @@ function onQuestionWheel(e: WheelEvent) {
       </div>
 
       <div
-        v-if="!layoutLocked"
         data-testid="panel-resizer-secondary-column"
         class="panel-resizer panel-resizer-v panel-resizer-secondary-column"
         role="separator"
@@ -1316,7 +1354,9 @@ function onQuestionWheel(e: WheelEvent) {
       </div>
     </div>
 
-    <CameraCapture v-if="qCamOpen" @capture="onQuestionCamCapture" @close="qCamOpen = false" />
+    <Transition name="modal"
+      ><CameraCapture v-if="qCamOpen" @capture="onQuestionCamCapture" @close="qCamOpen = false"
+    /></Transition>
 
     <ScreenshotPicker
       v-if="qScreenshotOpen"
@@ -1324,21 +1364,23 @@ function onQuestionWheel(e: WheelEvent) {
       @close="qScreenshotOpen = false"
     />
 
-    <ImageCropper
-      v-if="pipelineStage === 'crop'"
-      :image-src="pipelineSrc"
-      @crop="onCropConfirm"
-      @skip="onCropSkip"
-      @cancel="onCropCancel"
-    />
+    <Transition name="modal"
+      ><ImageCropper
+        v-if="pipelineStage === 'crop'"
+        :image-src="pipelineSrc"
+        @crop="onCropConfirm"
+        @skip="onCropSkip"
+        @cancel="onCropCancel"
+    /></Transition>
 
-    <ImageFilterModal
-      v-if="pipelineStage === 'filter'"
-      :image-src="pipelineSrc"
-      @confirm="onFilterConfirm"
-      @skip="onFilterSkip"
-      @cancel="onFilterCancel"
-    />
+    <Transition name="modal"
+      ><ImageFilterModal
+        v-if="pipelineStage === 'filter'"
+        :image-src="pipelineSrc"
+        @confirm="onFilterConfirm"
+        @skip="onFilterSkip"
+        @cancel="onFilterCancel"
+    /></Transition>
 
     <QuestionGroupConfirmModal
       :visible="showQuestionGroupConfirm"
@@ -1362,17 +1404,33 @@ function onQuestionWheel(e: WheelEvent) {
 <style scoped>
 .editor-layout {
   grid-template-columns:
-    minmax(260px, var(--secondary-left, 0.5fr)) 12px
+    minmax(260px, var(--secondary-left, 0.5fr)) 8px
     minmax(260px, var(--secondary-right, 0.5fr));
   grid-template-rows:
-    minmax(150px, var(--primary-row, 46%)) 12px
+    minmax(120px, var(--primary-row, 144px)) 8px
     minmax(180px, 1fr);
+}
+
+.editor-layout.answers-collapsed {
+  grid-template-rows: minmax(120px, 1fr) 4px 32px;
+}
+.editor-layout.answers-collapsed :deep(.answer-panel > :not(.panel-label)) {
+  display: none;
+}
+.editor-layout.answers-collapsed :deep(.panel-label) {
+  min-height: 30px !important;
+  height: 30px !important;
+  padding: 2px 10px !important;
+  border-bottom: 0;
+}
+.editor-layout.answers-collapsed .panel-resizer {
+  pointer-events: none;
 }
 
 .editor-layout.has-group {
   grid-template-columns:
-    minmax(260px, var(--primary-column, 42%)) 12px
-    minmax(220px, var(--secondary-left, 0.5fr)) 12px
+    minmax(260px, var(--primary-column, 42%)) 8px
+    minmax(220px, var(--secondary-left, 0.5fr)) 8px
     minmax(220px, var(--secondary-right, 0.5fr));
 }
 
@@ -1433,6 +1491,7 @@ function onQuestionWheel(e: WheelEvent) {
 
 .panel-resizer {
   position: relative;
+  z-index: 10;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -1443,7 +1502,7 @@ function onQuestionWheel(e: WheelEvent) {
 }
 
 .panel-resizer-h {
-  height: 12px;
+  height: 8px;
   cursor: row-resize;
   grid-area: 2 / 1 / 3 / 4;
 }
@@ -1453,7 +1512,7 @@ function onQuestionWheel(e: WheelEvent) {
 }
 
 .panel-resizer-v {
-  width: 12px;
+  width: 8px;
   cursor: col-resize;
 }
 

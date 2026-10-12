@@ -7,7 +7,6 @@ import type { ReviewOutcome, SessionRecord } from '@/composables/useReview'
 import { getMasteryLabel } from '@/composables/useStats'
 import { sanitizeHtml, formatMcOptions } from '@/utils/sanitize'
 import { parseMultipleChoice } from '@/utils/multipleChoice'
-import { usePanelFontSize } from '@/composables/usePanelFontSize'
 import { stripInternalLinks } from '@/utils/internalLinks'
 
 const props = defineProps<{
@@ -41,10 +40,6 @@ const note = ref('')
 const rated = ref(false)
 const selectedChoice = ref<string | null>(null)
 const summaryEntryId = ref<string | null>(null)
-const { fontSizeStyle: questionFontSizeStyle } = usePanelFontSize('question')
-const { fontSizeStyle: wrongFontSizeStyle } = usePanelFontSize('wrong')
-const { fontSizeStyle: correctFontSizeStyle } = usePanelFontSize('correct')
-const { fontSizeStyle: materialFontSizeStyle } = usePanelFontSize('material')
 const multipleChoice = computed(() =>
   parseMultipleChoice(
     stripInternalLinks(props.entry?.question || ''),
@@ -430,7 +425,6 @@ function ratingColor(q: number | string): string {
             <div ref="materialContentRef" class="relative min-h-full">
               <div
                 class="preserve-input-format px-4 py-3 text-base leading-relaxed md-content"
-                :style="{ fontSize: materialFontSizeStyle }"
                 v-html="sanitizedMaterial"
               />
             </div>
@@ -459,7 +453,6 @@ function ratingColor(q: number | string): string {
                 <div v-if="multipleChoice" class="px-3.5 py-3">
                   <div
                     class="preserve-input-format text-base leading-relaxed md-content"
-                    :style="{ fontSize: questionFontSizeStyle }"
                     v-html="sanitizedChoiceStem"
                   />
                   <div class="mt-4 grid gap-2">
@@ -478,7 +471,6 @@ function ratingColor(q: number | string): string {
                       >
                       <span
                         class="preserve-input-format md-content leading-relaxed"
-                        :style="{ fontSize: questionFontSizeStyle }"
                         v-html="sanitizeHtml(formatMcOptions(option.content))"
                       />
                     </button>
@@ -504,7 +496,6 @@ function ratingColor(q: number | string): string {
                 <div
                   v-else
                   class="preserve-input-format px-3.5 py-3 text-base leading-relaxed md-content"
-                  :style="{ fontSize: questionFontSizeStyle }"
                   v-html="sanitizedQuestion"
                 />
               </div>
@@ -534,7 +525,6 @@ function ratingColor(q: number | string): string {
               <div ref="wrongContentRef" :style="{ position: 'relative', minHeight: '100%' }">
                 <div
                   class="preserve-input-format px-3.5 py-3 text-base leading-relaxed md-content text-gray-800 dark:text-brand-light-gray"
-                  :style="{ fontSize: wrongFontSizeStyle }"
                   v-html="sanitizedWrongAnswer"
                 />
               </div>
@@ -571,7 +561,6 @@ function ratingColor(q: number | string): string {
               <div ref="correctContentRef" :style="{ position: 'relative', minHeight: '100%' }">
                 <div
                   class="preserve-input-format px-3.5 py-3 text-base leading-relaxed md-content text-gray-800 dark:text-brand-light-gray"
-                  :style="{ fontSize: correctFontSizeStyle }"
                   v-html="sanitizedCorrectAnswer"
                 />
               </div>

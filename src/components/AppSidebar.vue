@@ -1,4 +1,11 @@
 <script setup lang="ts">
+import SidebarAnchorIcon from './SidebarAnchorIcon.vue'
+import FilterItemRow from './FilterItemRow.vue'
+import { useInlineReveal } from '@/composables/useInlineReveal'
+import { useSidebarWidth } from '@/composables/useSidebarWidth'
+const { sidebarWidth, resizingSidebar, startSidebarResize, moveSidebarResize, stopSidebarResize, resizeSidebarByKey } = useSidebarWidth()
+const { enterReveal, leaveReveal, clearReveal } = useInlineReveal()
+
 // @AI-NOTE: 侧边栏组件 —— 筛选/排序/条目选择由 useFilter/useEntries
 // Hook 驱动。禁止在此实现筛选逻辑或直接操作数据库。
 import { ref, nextTick, computed, onUnmounted } from 'vue'
@@ -80,6 +87,34 @@ const emit = defineEmits<{
 }>()
 
 const collapsed = ref(false)
+const hoverExpanded = ref(false)
+const hoverClosing = ref(false)
+const sidebarCompact = computed(() => collapsed.value && !hoverExpanded.value && !hoverClosing.value)
+let closeAnimationTimer: ReturnType<typeof setTimeout> | undefined
+let hoverTimer: ReturnType<typeof setTimeout> | undefined
+function enterSidebar() {
+  clearTimeout(hoverTimer)
+  clearTimeout(closeAnimationTimer)
+  if (hoverClosing.value) { hoverClosing.value = false; hoverExpanded.value = true }
+  if (collapsed.value) hoverTimer = setTimeout(() => { hoverExpanded.value = true }, 160)
+}
+function leaveSidebar() {
+  clearTimeout(hoverTimer)
+  hoverTimer = setTimeout(() => {
+    if (!hoverExpanded.value) return
+    hoverClosing.value = true
+    hoverExpanded.value = false
+    closeAnimationTimer = setTimeout(() => { hoverClosing.value = false }, 180)
+  }, 100)
+}
+function toggleSidebar() {
+  clearTimeout(hoverTimer)
+  clearTimeout(closeAnimationTimer)
+  hoverClosing.value = false
+  collapsed.value = !collapsed.value
+  hoverExpanded.value = false
+}
+onUnmounted(() => { clearTimeout(hoverTimer); clearTimeout(closeAnimationTimer) })
 const sortOpen = ref(false)
 const batchMenuOpen = ref(false)
 const tagInputOpen = ref(false)
@@ -95,9 +130,17 @@ const newSourceInput = ref<HTMLInputElement | null>(null)
 const editingSource = ref<string | null>(null)
 const editSourceValue = ref('')
 const editSourceInput = ref<HTMLInputElement | null>(null)
+function setEditInput(el: unknown) {
+  editSourceInput.value = el instanceof HTMLInputElement ? el : null
+}
 const deletingSource = ref<string | null>(null)
 const filterPanelOpen = ref(true)
 const filterPanelHeight = ref(300)
+const {
+  enterReveal: enterFilterPanel,
+  leaveReveal: leaveFilterPanel,
+  clearReveal: clearFilterPanel,
+} = useInlineReveal(() => filterPanelHeight.value)
 const sidebarEl = ref<HTMLElement | null>(null)
 const addingFolder = ref(false)
 const newFolderName = ref('')
@@ -247,7 +290,7 @@ function startAddSource() {
   addingSource.value = true
   newSourceName.value = ''
   newSourceGlobal.value = false
-  nextTick(() => newSourceInput.value?.focus())
+  nextTick(() => newSourceInput.value?.focus({ preventScroll: true }))
 }
 
 function confirmAddSource() {
@@ -263,19 +306,20 @@ function cancelAddSource() {
 
 <template>
   <!-- @AI-VIEW: DOM 可自由重构。样式仅限 Tailwind CSS 工具类。严禁内联 style 或自定义 CSS。 -->
+  <div class="sidebar-hover-host" :class="{ 'is-collapsed': collapsed, 'is-resizing': resizingSidebar }" :style="{ '--sidebar-width': `${sidebarWidth}px` }" @mouseenter="enterSidebar" @mouseleave="leaveSidebar">
   <aside
     ref="sidebarEl"
     class="bg-white dark:bg-[#141413] border-r border-gray-100 dark:border-[#2e2e2c] flex flex-col overflow-hidden transition-[width] duration-300 ease-out"
-    :class="collapsed ? 'w-[48px]' : 'w-[280px]'"
+    :class="[collapsed && !hoverExpanded ? 'w-[48px]' : 'w-[280px]', { 'sidebar-hover-open': collapsed && hoverExpanded, 'sidebar-hover-closing': hoverClosing }]"
   >
     <!-- Collapse toggle (always visible) -->
     <div
-      class="flex items-center px-4 py-3 border-b-2 border-gray-100 dark:border-[#2e2e2c]"
-      :class="collapsed ? 'justify-center' : 'justify-between'"
+      class="sidebar-continuous-header flex items-center px-4 py-3 border-b-2 border-gray-100 dark:border-[#2e2e2c]"
+      :class="sidebarCompact ? 'justify-center' : 'justify-between'"
     >
       <!-- Logo (hidden when collapsed) -->
       <div
-        v-if="!collapsed"
+        :class="{ 'sidebar-title-hidden': sidebarCompact }"
         class="text-lg font-bold text-accent flex items-center gap-2 overflow-hidden whitespace-nowrap"
       >
         <span class="font-display tracking-tight">错题本</span>
@@ -285,7 +329,7 @@ function cancelAddSource() {
       <button
         class="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 dark:text-brand-light-gray hover:text-gray-700 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-[#1e1e1c] border border-gray-200 dark:border-[#2e2e2c] transition-all duration-200"
         :title="collapsed ? '展开侧栏' : '收起侧栏'"
-        @click="collapsed = !collapsed"
+        @click="toggleSidebar"
       >
         <svg
           width="16"
@@ -302,7 +346,7 @@ function cancelAddSource() {
     </div>
 
     <!-- Collapsed view: hint icons only -->
-    <div v-if="collapsed" class="flex-1 flex flex-col items-center gap-5 pt-5">
+    <div v-if="false" class="sidebar-icon-rail flex-1 flex flex-col items-center gap-5 pt-5" :class="{ 'rail-hidden': !sidebarCompact }">
       <!-- Notebook back button -->
       <button
         v-if="notebookName"
@@ -417,8 +461,8 @@ function cancelAddSource() {
     </div>
 
     <!-- Expanded content -->
-    <template v-else>
-      <div class="px-4 pt-4">
+    <div class="sidebar-expanded-content" :class="{ 'content-compact': sidebarCompact, 'content-closing': hoverClosing }">
+      <div class="sidebar-notebook-row px-4 pt-4">
         <!-- Current notebook -->
         <div v-if="notebookName" class="flex items-center gap-2 mb-3">
           <button
@@ -453,7 +497,7 @@ function cancelAddSource() {
               fill="none"
               stroke="currentColor"
               stroke-width="2.5"
-              class="transition-transform"
+              class="transition-transform duration-200 ease-out motion-reduce:transition-none"
               :class="filterPanelOpen ? '' : 'rotate-180'"
             >
               <polyline points="6 15 12 9 18 15" />
@@ -462,9 +506,10 @@ function cancelAddSource() {
         </div>
       </div>
 
+      <Transition :css="false" @enter="enterFilterPanel" @leave="leaveFilterPanel" @enter-cancelled="clearFilterPanel" @leave-cancelled="clearFilterPanel">
       <div
         v-show="filterPanelOpen"
-        class="shrink-0 overflow-y-auto px-4 pb-3"
+        class="sidebar-filter-content shrink-0 overflow-y-auto px-4 pb-3"
         :style="{ height: `${filterPanelHeight}px` }"
       >
         <!-- Subject filter -->
@@ -495,11 +540,12 @@ function cancelAddSource() {
 
         <!-- Source filter -->
         <div class="sidebar-section mb-3.5">
-          <div class="flex items-center justify-between mb-1.5">
+          <div class="filter-section-header flex items-center justify-between mb-1.5">
             <button
-              class="flex items-center gap-1.5 text-base font-semibold uppercase tracking-[0.5px] text-gray-500 dark:text-brand-mid hover:text-gray-700 dark:hover:text-brand-light-gray transition-colors"
+              class="min-h-10 px-3 py-2 rounded-xl flex items-center gap-2 text-base font-semibold uppercase tracking-[0.5px] text-gray-500 dark:text-brand-mid hover:text-gray-700 dark:hover:text-brand-light-gray transition-colors"
               @click="sourceSectionOpen = !sourceSectionOpen"
             >
+              <SidebarAnchorIcon kind="source" />
               来源
               <svg
                 width="13"
@@ -536,7 +582,7 @@ function cancelAddSource() {
           <div class="section-collapse" :class="{ active: sourceSectionOpen }">
             <div class="section-collapse-inner">
               <!-- Inline input for new source -->
-              <div v-if="addingSource" class="mb-1.5 space-y-1.5">
+              <Transition :css="false" @enter="enterReveal" @leave="leaveReveal" @enter-cancelled="clearReveal" @leave-cancelled="clearReveal"><div v-if="addingSource" class="mb-1.5 space-y-1.5">
                 <input
                   ref="newSourceInput"
                   v-model="newSourceName"
@@ -570,15 +616,9 @@ function cancelAddSource() {
                   />
                   应用于所有错题本
                 </label>
-              </div>
-              <div class="flex flex-wrap gap-1">
-                <button
-                  class="source-chip text-sm px-2.5 py-1 rounded-md border border-transparent bg-white dark:bg-[#141413] text-gray-600 dark:text-brand-light-gray cursor-pointer transition-all duration-200 ease-out active:scale-95 hover:border-gray-200 dark:hover:border-[#2e2e2c] hover:text-accent whitespace-nowrap"
-                  :class="{ '!bg-accent !text-white !border-accent': !activeSource }"
-                  @click="emit('filterSource', '__all__')"
-                >
-                  全部 ({{ entries.length }})
-                </button>
+              </div></Transition>
+              <div class="filter-item-list">
+                <FilterItemRow label="全部" :count="entries.length" :selected="!activeSource" @select="emit('filterSource', '__all__')" />
                 <template v-if="allSources.length === 0">
                   <span class="text-xs text-gray-500 dark:text-brand-mid">暂无来源</span>
                 </template>
@@ -586,7 +626,7 @@ function cancelAddSource() {
                   <!-- Inline edit mode -->
                   <span v-if="editingSource === source" class="inline-flex items-center gap-1">
                     <input
-                      :ref="(el) => (editSourceInput.value = el as HTMLInputElement | null)"
+                      :ref="setEditInput"
                       v-model="editSourceValue"
                       type="text"
                       class="text-sm px-3 py-1.5 rounded-md border border-accent bg-white dark:bg-[#141413] outline-none text-gray-800 dark:text-brand-light w-28 focus:ring-2 focus:ring-accent/20 transition-all"
@@ -667,57 +707,8 @@ function cancelAddSource() {
                     </button>
                   </span>
 
-                  <!-- Normal chip: parent = clip only; left filled, right ghost -->
-                  <span
-                    v-else
-                    class="inline-flex items-center rounded-md border border-transparent group-hover:border-gray-200 dark:group-hover:border-[#2e2e2c] overflow-hidden group transition-all duration-200 ease-out"
-                    :class="{ '!border-accent': activeSource === source }"
-                  >
-                    <button
-                      class="source-chip text-sm px-2.5 py-1 cursor-pointer border-none transition-all duration-200 ease-out active:scale-95 bg-white dark:bg-[#141413] text-gray-600 dark:text-brand-light-gray hover:brightness-95"
-                      :class="{ '!bg-accent !text-white': activeSource === source }"
-                      @click="emit('filterSource', activeSource === source ? null : source)"
-                    >
-                      {{ source }} ({{ sourceMap[source] || 0 }})
-                    </button>
-                    <button
-                      class="py-1 border-none bg-transparent transition-opacity duration-300 ease-out opacity-0 group-hover:opacity-100 px-1.5 text-gray-400 dark:text-brand-mid hover:bg-black/5 dark:hover:bg-white/10 hover:text-accent pointer-events-none group-hover:pointer-events-auto"
-                      title="重命名来源"
-                      @click.stop="startEditSource(source)"
-                    >
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2.5"
-                        class="flex-shrink-0"
-                      >
-                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                      </svg>
-                    </button>
-                    <button
-                      class="py-1 border-none bg-transparent transition-opacity duration-300 ease-out opacity-0 group-hover:opacity-100 px-1.5 text-gray-400 dark:text-brand-mid hover:bg-red-50 dark:hover:bg-red-950/50 hover:text-red-500 pointer-events-none group-hover:pointer-events-auto"
-                      title="删除来源"
-                      @click.stop="startDeleteSource(source)"
-                    >
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2.5"
-                        class="flex-shrink-0"
-                      >
-                        <line x1="18" y1="6" x2="6" y2="18" />
-                        <line x1="6" y1="6" x2="18" y2="18" />
-                      </svg>
-                    </button>
-                  </span>
-                </template>
+                  <FilterItemRow v-else :label="source" :count="sourceMap[source] || 0" :selected="activeSource === source" manageable  @select="emit('filterSource', activeSource === source ? null : source)" @edit="startEditSource(source)" @delete="startDeleteSource(source)" />
+</template>
               </div>
             </div>
           </div>
@@ -726,9 +717,10 @@ function cancelAddSource() {
         <!-- Mastery filter -->
         <div class="mt-3">
           <button
-            class="flex items-center gap-1.5 text-base font-semibold uppercase tracking-[0.5px] text-gray-500 dark:text-brand-mid hover:text-gray-700 dark:hover:text-brand-light-gray transition-colors"
+            class="min-h-10 px-3 py-2 rounded-xl flex items-center gap-2 text-base font-semibold uppercase tracking-[0.5px] text-gray-500 dark:text-brand-mid hover:text-gray-700 dark:hover:text-brand-light-gray transition-colors"
             @click="masteryOpen = !masteryOpen"
           >
+            <SidebarAnchorIcon kind="mastery" />
             掌握程度
             <svg
               width="13"
@@ -785,34 +777,35 @@ function cancelAddSource() {
         </div>
       </div>
 
+      </Transition>
+      <Transition :css="false" @enter="enterReveal" @leave="leaveReveal" @enter-cancelled="clearReveal" @leave-cancelled="clearReveal">
       <div
         v-if="filterPanelOpen"
-        class="group relative h-2 shrink-0 cursor-row-resize border-y border-gray-100 bg-gray-50/60 dark:border-[#2e2e2c] dark:bg-[#1b1b19]"
+        class="group relative h-4 shrink-0 cursor-row-resize bg-transparent"
         title="拖动调整上下区域大小"
         data-testid="sidebar-resizer"
         @pointerdown.prevent="startResize"
       >
         <span
-          class="absolute left-1/2 top-1/2 h-0.5 w-8 -translate-x-1/2 -translate-y-1/2 rounded-full bg-gray-300 transition-colors group-hover:bg-accent dark:bg-[#444440]"
+          class="pointer-events-none absolute inset-x-4 top-1/2 h-px bg-gray-300/50 dark:bg-[#444440]"
+        />
+        <span
+          class="absolute left-1/2 top-1/2 h-0.5 w-6 -translate-x-1/2 -translate-y-1/2 rounded-full bg-gray-400/40 transition-[width,background-color] duration-150 group-hover:w-10 group-hover:bg-accent/70 group-active:bg-accent dark:bg-[#686860] dark:group-hover:bg-accent/70"
         />
       </div>
 
+      </Transition>
       <!-- Entry list -->
-      <div class="flex-1 overflow-y-auto border-t border-gray-100 dark:border-[#2e2e2c]">
+      <div class="sidebar-entry-list flex-1 min-h-0 overflow-y-auto">
         <div
-          class="px-4 py-2.5 text-[11px] text-gray-400 dark:text-brand-mid font-semibold uppercase tracking-[0.5px] flex justify-between items-center"
+          class="button-tray sidebar-action-tray px-4 py-2.5 text-[11px] text-gray-400 dark:text-brand-mid font-semibold uppercase tracking-[0.5px] flex justify-between items-center"
         >
           <!-- Select all + Batch dropdown -->
           <div class="flex items-center gap-2">
             <button
-              class="w-4 h-4 rounded border-2 flex items-center justify-center transition-all flex-shrink-0"
-              :class="
-                selectedCount > 0
-                  ? selectedCount === filteredEntries.length
-                    ? 'bg-accent border-accent text-white'
-                    : 'bg-accent/30 border-accent'
-                  : 'border-gray-300 hover:border-accent'
-              "
+              class="sidebar-select-all w-4 h-4 rounded border flex items-center justify-center transition-all flex-shrink-0"
+              :aria-pressed="selectedCount > 0"
+              aria-label="全选题目"
               title="全选"
               @click="handleSelectAll"
             >
@@ -854,7 +847,7 @@ function cancelAddSource() {
               </button>
 
               <!-- Batch dropdown menu -->
-              <div
+              <Transition name="popover"><div
                 v-if="batchMenuOpen"
                 class="absolute left-0 top-6 z-30 bg-white dark:bg-[#141413] rounded-xl shadow-lg border border-gray-100 dark:border-[#2e2e2c] py-1 min-w-[150px]"
                 @click.stop
@@ -967,6 +960,7 @@ function cancelAddSource() {
                 </template>
               </div>
 
+              </Transition>
               <!-- Click outside to close -->
               <div v-if="batchMenuOpen" class="fixed inset-0 z-20" @click="batchMenuOpen = false" />
             </div>
@@ -1018,14 +1012,15 @@ function cancelAddSource() {
             </button>
 
             <!-- Dropdown -->
-            <div
+            <Transition name="popover"><div
               v-if="sortOpen"
-              class="absolute right-0 top-6 z-30 bg-white dark:bg-[#141413] rounded-xl shadow-lg border border-gray-100 dark:border-[#2e2e2c] py-1 min-w-[140px]"
+              class="sort-navigation-menu absolute right-0 top-6 z-30 bg-white dark:bg-[#141413] rounded-xl shadow-lg border border-gray-100 dark:border-[#2e2e2c] py-1 min-w-[140px]"
               @click.stop
             >
               <button
                 v-for="opt in sortOptions"
                 :key="opt.key"
+                :aria-current="sortKey === opt.key ? 'true' : undefined"
                 class="w-full flex items-center justify-between px-3 py-1.5 text-[12px] text-left hover:bg-gray-50 dark:hover:bg-[#2a2a28] transition-all duration-200 ease-out active:scale-95"
                 :class="
                   sortKey === opt.key
@@ -1056,7 +1051,7 @@ function cancelAddSource() {
                   sortDir === 'asc' ? '↑' : '↓'
                 }}</span>
               </button>
-            </div>
+            </div></Transition>
           </div>
 
           <!-- Click outside to close -->
@@ -1103,7 +1098,7 @@ function cancelAddSource() {
       </div>
 
       <!-- Installed notebook features -->
-      <div class="px-4 pt-3 border-t border-gray-100 dark:border-[#2e2e2c]">
+      <div class="sidebar-features px-4 pt-3 border-t border-gray-100 dark:border-[#2e2e2c]">
         <button
           v-for="plugin in installedPlugins"
           :key="plugin.id"
@@ -1124,7 +1119,7 @@ function cancelAddSource() {
           {{ plugin.name }}
         </button>
         <button
-          class="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-[8px] text-[13px] text-brand-mid dark:text-brand-mid hover:text-brand-dark dark:hover:text-brand-light-gray hover:bg-brand-light-gray dark:hover:bg-[#2a2a28] transition-colors"
+          class="sidebar-footer-action w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-[8px] text-[13px] text-brand-mid dark:text-brand-mid hover:text-brand-dark dark:hover:text-brand-light-gray hover:bg-brand-light-gray dark:hover:bg-[#2a2a28] transition-colors"
           @click="emit('manage-plugins')"
         >
           <svg
@@ -1142,9 +1137,9 @@ function cancelAddSource() {
       </div>
 
       <!-- Settings -->
-      <div class="px-4 py-3 border-t border-gray-100 dark:border-[#2e2e2c]">
+      <div class="sidebar-settings px-4 py-3 border-t border-gray-100 dark:border-[#2e2e2c]">
         <button
-          class="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-[8px] text-[13px] text-brand-mid dark:text-brand-mid hover:text-brand-dark dark:hover:text-brand-light-gray hover:bg-brand-light-gray dark:hover:bg-[#2a2a28] transition-colors"
+          class="sidebar-footer-action w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-[8px] text-[13px] text-brand-mid dark:text-brand-mid hover:text-brand-dark dark:hover:text-brand-light-gray hover:bg-brand-light-gray dark:hover:bg-[#2a2a28] transition-colors"
           data-testid="settings-toggle"
           @click="emit('toggle-settings')"
         >
@@ -1164,6 +1159,10 @@ function cancelAddSource() {
           设置
         </button>
       </div>
-    </template>
+    </div>
   </aside>
+  <div v-if="!collapsed" role="separator" aria-label="调整侧边栏宽度" aria-orientation="vertical" :aria-valuenow="sidebarWidth" aria-valuemin="220" aria-valuemax="480" tabindex="0"
+    data-testid="sidebar-width-resizer" class="absolute -right-1 top-0 bottom-0 z-50 w-2 cursor-col-resize touch-none focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent"
+    @pointerdown="startSidebarResize" @pointermove="moveSidebarResize" @pointerup="stopSidebarResize" @pointercancel="stopSidebarResize" @lostpointercapture="stopSidebarResize" @keydown="resizeSidebarByKey" />
+  </div>
 </template>

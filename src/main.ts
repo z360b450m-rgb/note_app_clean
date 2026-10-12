@@ -1,9 +1,12 @@
 import { createApp } from 'vue'
 import App from './App.vue'
 import './style.css'
+import './ui-theme.css'
+import { installButtonMotion } from './utils/buttonMotion'
 
 const app = createApp(App)
 app.mount('#app')
+installButtonMotion()
 
 if ('serviceWorker' in navigator) {
   if (import.meta.env.PROD) {

@@ -52,7 +52,7 @@ RAG-AIAgent/                        # 后端 Python RAG 服务（云原生）
 | 偏好存储 | **localStorage** | AI Skills / 选中 KB |
 | 代码规范 | ESLint + Prettier + Husky | Git hook 自动格式化 |
 | 网络 | 原生 **fetch + ReadableStream** | 手写 SSE 解析，0 额外 HTTP 依赖 |
-| 安全消毒 | **DOMPurify + marked** | 富文本 XSS 防护 |
+| 安全消毒 | **DOMPurify** | 富文本 XSS 防护 |
 
 ### 后端 (RAG-AIAgent)
 
@@ -553,7 +553,7 @@ data: {"answer": "...", "sources": ["错题标题1", "错题标题2"], "confiden
 
 | 文件 | 改动 |
 |---|---|
-| `notes-app/src/components/BatchBar.vue` | 已有批量选择 UI，加「移到 KB」按钮 |
+| `notes-app/src/components/AppSidebar.vue` | 已有批量选择 UI，加「移到 KB」按钮 |
 | `notes-app/src/composables/useEntries.ts` | 加 `bulkMoveToKb(ids: string[], kbId: string)`：循环改 `entry.kbId` → db.put → `ragSync.upsertEntry` |
 | 无需后端改动 | upsert 端点已经处理跨 KB 迁移 |
 

@@ -130,6 +130,7 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
     </button>
 
     <!-- Dropdown panel -->
+    <Transition name="popover">
     <div
       v-if="dropdownOpen"
       class="absolute top-full left-0 mt-1 w-56 bg-white dark:bg-[#1e1e1c] border border-gray-200 dark:border-[#2e2e2c] rounded-lg shadow-lg z-50 flex flex-col"
@@ -215,5 +216,6 @@ onUnmounted(() => document.removeEventListener('click', onDocClick))
         </button>
       </div>
     </div>
+    </Transition>
   </div>
 </template>

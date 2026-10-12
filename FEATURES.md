@@ -637,13 +637,6 @@
 - 复习模式下展示题目和答案内容时，使用 DOMPurify 对 HTML 进行安全清洗
 - 防止通过粘贴内容注入 XSS 攻击脚本
 
-### 19.2 Markdown 安全渲染
-
-- 使用 `marked` 库解析 Markdown 内容
-- 解析后通过 DOMPurify 进一步清洗，确保输出安全
-
----
-
 ## 20. PWA 离线支持
 
 ### 20.1 Service Worker
@@ -672,7 +665,6 @@
 | MediaDevices API        | 摄像头拍照        |
 | desktopCapturer         | Electron 桌面截图 |
 | DOMPurify               | HTML 安全消毒     |
-| marked                  | Markdown 解析     |
 | Service Worker          | PWA 离线缓存      |
 | ResizeObserver          | 响应式面板        |
 | localStorage            | 设置持久化        |
@@ -688,7 +680,6 @@ src/
 ├── types/index.ts           # 类型定义 (NoteEntry, Notebook, ReviewLog)
 ├── services/db.ts           # 数据层 (IndexedDB + Electron 文件存储)
 ├── utils/
-│   ├── markdown.ts          # Markdown 安全渲染 (marked + DOMPurify)
 │   └── sanitize.ts          # HTML 消毒 (DOMPurify)
 ├── composables/
 │   ├── useEntries.ts        # 条目 CRUD、脏状态、快照、批量操作

@@ -231,6 +231,47 @@ function stripPageNoise(text: string): string {
   return cleaned.join('\n')
 }
 
+export async function extractKnowledgePdf(
+  file: File,
+  onProgress?: (current: number, total: number) => void,
+): Promise<{ content: string; pageCount: number }> {
+  const lib = await ensurePdfJs()
+  const task = lib.getDocument({ data: await file.arrayBuffer() })
+  try {
+    const doc = await task.promise
+    const pages: string[] = []
+    for (let index = 1; index <= doc.numPages; index++) {
+      onProgress?.(index, doc.numPages)
+      const page = await doc.getPage(index)
+      const text = await page.getTextContent()
+      const items: TextItem[] = []
+      for (const item of text.items) {
+        if ('str' in item)
+          items.push({
+            str: item.str,
+            transform: item.transform as number[],
+            width: item.width,
+            height: item.height,
+          })
+      }
+      pages.push(reconstructText(items))
+      page.cleanup()
+    }
+    if (!pages.some((page) => page.trim()))
+      throw new Error('PDF 未提取到文字，扫描件需要先进行 OCR。')
+    return {
+      content: pages.map((text, i) => `【第 ${i + 1} 页】\n${text}`).join('\n\n'),
+      pageCount: doc.numPages,
+    }
+  } catch (error) {
+    if (error instanceof Error && error.name === 'PasswordException')
+      throw new Error('PDF 已加密，请先解除密码后导入。')
+    throw error
+  } finally {
+    await task.destroy()
+  }
+}
+
 export async function parsePdfFile(
   file: File,
   notebookId: string,

@@ -3,6 +3,9 @@ import { computed, ref, watch } from 'vue'
 import type { NoteEntry, QuestionGroup } from '@/types'
 import type { SortKey } from '@/composables/useFilter'
 import EntryList from './EntryList.vue'
+import { useInlineReveal } from '@/composables/useInlineReveal'
+
+const { enterReveal, leaveReveal, clearReveal } = useInlineReveal()
 
 const props = defineProps<{
   entries: NoteEntry[]
@@ -82,7 +85,7 @@ function requestDelete(folder: string) {
   <div class="pb-2" data-testid="folder-entry-tree">
     <div v-for="folder in folders" :key="folder" class="mb-0.5">
       <div
-        class="group mx-2 flex h-8 items-center rounded-lg px-1.5 text-[12px] transition-colors"
+        class="folder-row group mx-2 flex h-8 items-center rounded-lg px-1.5 text-[12px] transition-colors"
         :class="
           activeFolder === folder
             ? 'bg-accent/10 text-accent'
@@ -101,7 +104,7 @@ function requestDelete(folder: string) {
             fill="none"
             stroke="currentColor"
             stroke-width="2.5"
-            class="shrink-0 transition-transform"
+            class="shrink-0 transition-transform duration-200 ease-out motion-reduce:transition-none"
             :class="expanded.has(folder) ? 'rotate-90' : ''"
           >
             <polyline points="9 18 15 12 9 6" />
@@ -128,7 +131,7 @@ function requestDelete(folder: string) {
             @blur="finishRename(folder)"
           />
           <span v-else class="min-w-0 flex-1 truncate">{{ folder }}</span>
-          <span class="shrink-0 text-[10px] opacity-60">{{ entriesIn(folder).length }}</span>
+          <span class="shrink-0 text-xs font-normal tabular-nums text-gray-500 dark:text-brand-mid">{{ entriesIn(folder).length }}</span>
         </button>
 
         <button
@@ -184,6 +187,7 @@ function requestDelete(folder: string) {
         </button>
       </div>
 
+      <Transition :css="false" @enter="enterReveal" @leave="leaveReveal" @enter-cancelled="clearReveal" @leave-cancelled="clearReveal">
       <div
         v-if="expanded.has(folder) && entriesIn(folder).length > 0"
         class="ml-5 border-l border-gray-100 pl-0.5 dark:border-[#2e2e2c]"
@@ -201,11 +205,12 @@ function requestDelete(folder: string) {
           @range-select="(ids, from, to) => emit('rangeSelect', ids, from, to)"
         />
       </div>
+      </Transition>
     </div>
 
     <div class="mb-0.5">
       <div
-        class="group mx-2 flex h-8 items-center rounded-lg px-1.5 text-[12px] transition-colors"
+        class="folder-row group mx-2 flex h-8 items-center rounded-lg px-1.5 text-[12px] transition-colors"
         :class="
           activeFolder === '__none__'
             ? 'bg-accent/10 text-accent'
@@ -223,7 +228,7 @@ function requestDelete(folder: string) {
             fill="none"
             stroke="currentColor"
             stroke-width="2.5"
-            class="shrink-0 transition-transform"
+            class="shrink-0 transition-transform duration-200 ease-out motion-reduce:transition-none"
             :class="expanded.has('__none__') ? 'rotate-90' : ''"
           >
             <polyline points="9 18 15 12 9 6" />
@@ -240,7 +245,7 @@ function requestDelete(folder: string) {
             <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
           </svg>
           <span class="min-w-0 flex-1 truncate">未归档</span>
-          <span class="shrink-0 text-[10px] opacity-60">{{ unfiledEntries.length }}</span>
+          <span class="shrink-0 text-xs font-normal tabular-nums text-gray-500 dark:text-brand-mid">{{ unfiledEntries.length }}</span>
         </button>
         <button
           v-if="selectedCount"
@@ -261,6 +266,7 @@ function requestDelete(folder: string) {
           </svg>
         </button>
       </div>
+      <Transition :css="false" @enter="enterReveal" @leave="leaveReveal" @enter-cancelled="clearReveal" @leave-cancelled="clearReveal">
       <div
         v-if="expanded.has('__none__') && unfiledEntries.length > 0"
         class="ml-5 border-l border-gray-100 pl-0.5 dark:border-[#2e2e2c]"
@@ -278,6 +284,7 @@ function requestDelete(folder: string) {
           @range-select="(ids, from, to) => emit('rangeSelect', ids, from, to)"
         />
       </div>
+      </Transition>
     </div>
   </div>
 </template>

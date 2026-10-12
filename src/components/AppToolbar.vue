@@ -36,6 +36,7 @@ const emit = defineEmits<{
 const moreMenuOpen = ref(false)
 const toolbarRef = ref<HTMLElement | null>(null)
 const compact = ref(false)
+const searchInput = ref<HTMLInputElement | null>(null)
 
 let observer: ResizeObserver | null = null
 
@@ -63,13 +64,18 @@ function moreAction(
   else if (action === 'delete') emit('delete')
   moreMenuOpen.value = false
 }
+function saveFromMenu() {
+  if (!props.isDirty) return
+  emit('save')
+  moreMenuOpen.value = false
+}
 </script>
 
 <template>
   <!-- @AI-VIEW: DOM 可自由重构。样式仅限 Tailwind CSS 工具类。严禁内联 style 或自定义 CSS。 -->
   <div
     ref="toolbarRef"
-    class="flex items-center bg-white dark:bg-[#141413] border-b-2 border-gray-100 dark:border-[#2e2e2c] transition-all duration-300"
+    class="button-tray main-button-tray flex items-center bg-white dark:bg-[#141413] border-b-2 border-gray-100 dark:border-[#2e2e2c] transition-all duration-300"
     :class="compact ? 'gap-1 px-3 py-2' : 'gap-2.5 px-5 py-3'"
     style="-webkit-app-region: drag"
   >
@@ -123,15 +129,18 @@ function moreAction(
 
     <!-- Drawing toggle -->
     <button
+      type="button"
+      aria-label="切换画笔模式"
+      :aria-pressed="drawingEnabled"
       style="-webkit-app-region: no-drag"
       class="flex items-center gap-1 rounded-md text-[13px] font-medium transition-all duration-200 ease-out active:scale-95"
       :class="[
         drawingEnabled
-          ? 'bg-amber-500 text-white hover:brightness-110'
+          ? 'bg-accent/10 text-accent'
           : 'border border-gray-200 dark:border-[#2e2e2c] bg-white dark:bg-[#1e1e1c] hover:bg-gray-100 dark:hover:bg-[#2a2a28] text-gray-600 dark:text-brand-light-gray',
         compact ? 'px-2 py-1.5' : 'px-2.5 py-1.5',
       ]"
-      title="画笔 / 橡皮"
+      :title="drawingEnabled ? '画笔模式已开启；点击返回文字编辑' : '开启画笔 / 橡皮'"
       @click="emit('toggleDrawing')"
     >
       <svg
@@ -148,7 +157,7 @@ function moreAction(
       <span
         class="inline-block overflow-hidden whitespace-nowrap transition-[max-width,opacity] duration-300 ease-out"
         :class="compact ? 'max-w-0 opacity-0' : 'max-w-24 opacity-100'"
-        >画笔</span
+        >{{ drawingEnabled ? '画笔已开启' : '画笔' }}</span
       >
     </button>
 
@@ -191,8 +200,9 @@ function moreAction(
     <template v-if="mode === 'edit'">
       <!-- Search -->
       <div
-        class="flex-1 flex items-center gap-2 bg-brand-light-gray dark:bg-[#1e1e1c] rounded-lg focus-within:bg-white dark:focus-within:bg-gray-700 focus-within:ring-2 focus-within:ring-accent/20 transition-all"
+        class="workspace-search flex items-center gap-2 bg-brand-light-gray dark:bg-[#1e1e1c] rounded-lg focus-within:bg-white dark:focus-within:bg-gray-700 focus-within:ring-2 focus-within:ring-accent/20"
         :class="compact ? 'px-2 py-1' : 'px-3 py-1.5'"
+        @click="searchInput?.focus()"
       >
         <svg
           width="15"
@@ -207,7 +217,9 @@ function moreAction(
           <line x1="21" y1="21" x2="16.65" y2="16.65" />
         </svg>
         <input
+          ref="searchInput"
           type="text"
+          aria-label="搜索错题"
           :placeholder="compact ? '搜索...' : '搜索错题...'"
           class="flex-1 border-none bg-transparent text-[13px] outline-none text-gray-800 dark:text-brand-light"
           :value="searchQuery"
@@ -301,42 +313,6 @@ function moreAction(
       </button>
 
       <!-- Save -->
-      <button
-        v-if="activeId"
-        style="-webkit-app-region: no-drag"
-        class="flex items-center gap-1 rounded-md text-[13px] font-medium transition-all duration-200 ease-out active:scale-95"
-        :class="[
-          isDirty
-            ? 'bg-accent text-white hover:brightness-110 cursor-pointer'
-            : 'border border-gray-200 dark:border-[#2e2e2c] bg-white dark:bg-[#1e1e1c] text-gray-300 dark:text-[#4a4a48] cursor-not-allowed',
-          compact ? 'px-2 py-1.5' : 'px-3 py-1.5',
-        ]"
-        :disabled="!isDirty"
-        title="保存 (Ctrl+S)"
-        @click="isDirty && emit('save')"
-      >
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-        >
-          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-          <polyline points="17 21 17 13 7 13 7 21" />
-          <polyline points="7 3 7 8 15 8" />
-        </svg>
-        <span
-          class="inline-block overflow-hidden whitespace-nowrap transition-[max-width,opacity] duration-300 ease-out"
-          :class="compact ? 'max-w-0 opacity-0' : 'max-w-24 opacity-100'"
-          >保存</span
-        >
-        <span
-          v-if="isDirty"
-          class="w-1.5 h-1.5 rounded-full bg-white dark:bg-[#141413] ml-0.5 flex-shrink-0"
-        />
-      </button>
 
       <!-- More menu (···) -->
       <div class="w-px h-5 bg-gray-200 dark:bg-[#2a2a28] flex-shrink-0" />
@@ -354,128 +330,149 @@ function moreAction(
           </svg>
         </button>
 
-        <div
-          v-if="moreMenuOpen"
-          class="absolute right-0 top-10 z-30 bg-white dark:bg-[#141413] rounded-xl shadow-lg border border-gray-100 dark:border-[#2e2e2c] py-1 min-w-[150px]"
-          @click.stop
-        >
-          <button
-            class="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-gray-600 dark:text-brand-light-gray hover:bg-gray-50 dark:hover:bg-[#2a2a28] transition-all duration-200 ease-out active:scale-95"
-            @click="moreAction('export-json')"
+        <Transition name="popover">
+          <div
+            v-if="moreMenuOpen"
+            class="absolute right-0 top-10 z-30 bg-white dark:bg-[#141413] rounded-xl shadow-lg border border-gray-100 dark:border-[#2e2e2c] py-1 min-w-[150px]"
+            @click.stop
           >
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
+            <button
+              class="w-full flex items-center gap-2 px-3 py-2 text-sm text-left"
+              :disabled="!isDirty"
+              title="保存 (Ctrl+S)"
+              @click="saveFromMenu"
             >
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="7 10 12 15 17 10" />
-              <line x1="12" y1="15" x2="12" y2="3" />
-            </svg>
-            导出归档
-          </button>
-          <button
-            class="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-gray-600 dark:text-brand-light-gray hover:bg-gray-50 dark:hover:bg-[#2a2a28] transition-all duration-200 ease-out active:scale-95"
-            @click="moreAction('export-pdf')"
-          >
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <polyline points="14 2 14 8 20 8" />
-              <line x1="16" y1="13" x2="8" y2="13" />
-              <line x1="16" y1="17" x2="8" y2="17" />
-            </svg>
-            导出 PDF (打印)
-          </button>
-          <button
-            class="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-gray-600 dark:text-brand-light-gray hover:bg-gray-50 dark:hover:bg-[#2a2a28] transition-all duration-200 ease-out active:scale-95"
-            @click="moreAction('import')"
-          >
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="3 10 8 15 13 10" />
-              <line x1="8" y1="15" x2="8" y2="3" />
-            </svg>
-            导入归档
-          </button>
-          <button
-            class="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-gray-600 dark:text-brand-light-gray hover:bg-gray-50 dark:hover:bg-[#2a2a28] transition-all duration-200 ease-out active:scale-95"
-            @click="moreAction('import-text')"
-          >
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <polyline points="14 2 14 8 20 8" />
-              <line x1="16" y1="13" x2="8" y2="13" />
-              <line x1="16" y1="17" x2="8" y2="17" />
-              <line x1="10" y1="9" x2="8" y2="9" />
-            </svg>
-            导入文本
-          </button>
-          <button
-            class="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-gray-600 dark:text-brand-light-gray hover:bg-gray-50 dark:hover:bg-[#2a2a28] transition-all duration-200 ease-out active:scale-95"
-            @click="moreAction('import-pdf')"
-          >
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <polyline points="14 2 14 8 20 8" />
-              <line x1="12" y1="18" x2="12" y2="12" />
-              <line x1="9" y1="15" x2="12" y2="12" />
-              <line x1="15" y1="15" x2="12" y2="12" />
-            </svg>
-            导入 PDF
-          </button>
-          <div class="border-t border-gray-100 dark:border-[#2e2e2c] my-1" />
-          <button
-            class="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-red-500 hover:bg-red-50 dark:hover:bg-red-900 dark:bg-red-950/50 transition-all duration-200 ease-out active:scale-95"
-            :class="{ 'opacity-30 pointer-events-none': !activeId }"
-            :disabled="!activeId"
-            @click="moreAction('delete')"
-          >
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <polyline points="3 6 5 6 21 6" />
-              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-            </svg>
-            删除
-          </button>
-        </div>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12l4 4v12a2 2 0 0 1-2 2Z" />
+                <polyline points="17 21 17 13 7 13 7 21" />
+                <polyline points="7 3 7 8 15 8" /></svg
+              >保存<span class="ml-auto text-xs">Ctrl+S</span>
+            </button>
 
+            <button
+              class="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-gray-600 dark:text-brand-light-gray hover:bg-gray-50 dark:hover:bg-[#2a2a28] transition-all duration-200 ease-out active:scale-95"
+              @click="moreAction('export-json')"
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              导出归档
+            </button>
+            <button
+              class="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-gray-600 dark:text-brand-light-gray hover:bg-gray-50 dark:hover:bg-[#2a2a28] transition-all duration-200 ease-out active:scale-95"
+              @click="moreAction('export-pdf')"
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+              </svg>
+              导出 PDF (打印)
+            </button>
+            <button
+              class="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-gray-600 dark:text-brand-light-gray hover:bg-gray-50 dark:hover:bg-[#2a2a28] transition-all duration-200 ease-out active:scale-95"
+              @click="moreAction('import')"
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="3 10 8 15 13 10" />
+                <line x1="8" y1="15" x2="8" y2="3" />
+              </svg>
+              导入归档
+            </button>
+            <button
+              class="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-gray-600 dark:text-brand-light-gray hover:bg-gray-50 dark:hover:bg-[#2a2a28] transition-all duration-200 ease-out active:scale-95"
+              @click="moreAction('import-text')"
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+                <line x1="10" y1="9" x2="8" y2="9" />
+              </svg>
+              导入文本
+            </button>
+            <button
+              class="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-gray-600 dark:text-brand-light-gray hover:bg-gray-50 dark:hover:bg-[#2a2a28] transition-all duration-200 ease-out active:scale-95"
+              @click="moreAction('import-pdf')"
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="12" y1="18" x2="12" y2="12" />
+                <line x1="9" y1="15" x2="12" y2="12" />
+                <line x1="15" y1="15" x2="12" y2="12" />
+              </svg>
+              导入 PDF
+            </button>
+            <div class="border-t border-gray-100 dark:border-[#2e2e2c] my-1" />
+            <button
+              class="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-red-500 hover:bg-red-50 dark:hover:bg-red-900 dark:bg-red-950/50 transition-all duration-200 ease-out active:scale-95"
+              :class="{ 'opacity-30 pointer-events-none': !activeId }"
+              :disabled="!activeId"
+              @click="moreAction('delete')"
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <polyline points="3 6 5 6 21 6" />
+                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+              </svg>
+              删除
+            </button>
+          </div>
+        </Transition>
         <!-- Click outside to close -->
         <div v-if="moreMenuOpen" class="fixed inset-0 z-20" @click="moreMenuOpen = false" />
       </div>

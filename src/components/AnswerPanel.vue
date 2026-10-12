@@ -9,7 +9,6 @@ import QuestionLinkModal from './QuestionLinkModal.vue'
 import type { NoteEntry } from '@/types'
 import { saveImage, toDisplayHtml, toStorageHtml } from '@/services/imageStorage'
 import { useRichTextSizing } from '@/composables/useRichTextSizing'
-import { usePanelFontSize } from '@/composables/usePanelFontSize'
 import { pastePlainText } from '@/utils/plainTextPaste'
 import { decorateInternalLinks } from '@/utils/internalLinks'
 
@@ -44,16 +43,17 @@ const screenshotOpen = ref(false)
 const wrapperRef = ref<HTMLDivElement | null>(null)
 const showQuestionLinkModal = ref(false)
 const linkedTargetId = ref<string | null>(null)
-const { fontSize, fontSizeStyle, setFontSize } = usePanelFontSize(props.type)
 
 const {
   hasSelectedImage,
   imageWidth,
   hasTextSelection,
   isBold,
+  boldMixed,
+  highlightColor,
   captureSelection,
   handleEditorClick,
-  applyFontSize,
+
   toggleBold,
   applyHighlight,
   applyImageWidth,
@@ -61,10 +61,14 @@ const {
   resetSizingState,
   insertInternalLink,
   removeInternalLink,
-} = useRichTextSizing(() => bodyRef.value, onInput, setFontSize, (targetId) => {
-  linkedTargetId.value = targetId
-  showQuestionLinkModal.value = true
-})
+} = useRichTextSizing(
+  () => bodyRef.value,
+  onInput,
+  (targetId) => {
+    linkedTargetId.value = targetId
+    showQuestionLinkModal.value = true
+  },
+)
 
 function requestQuestionLink() {
   linkedTargetId.value = null
@@ -88,7 +92,9 @@ function openLinkedEntry(id: string) {
 
 const isWrong = props.type === 'wrong'
 const label = isWrong ? '错误答案' : '正确答案'
-const dotClass = isWrong ? 'bg-red-400' : 'bg-emerald-400'
+const dotClass = isWrong
+  ? 'bg-[#b85c4b] dark:bg-[#df9a8c]'
+  : 'bg-[#63816b] dark:bg-[#a0b8a5]'
 
 const panelBg = isWrong
   ? 'bg-red-50 border-red-100 dark:bg-red-500/10 dark:border-red-500/20'
@@ -98,8 +104,8 @@ const headerBorder = isWrong
   ? 'border-red-100 dark:border-red-500/20'
   : 'border-emerald-100 dark:border-emerald-500/20'
 const headerText = isWrong
-  ? 'text-red-600 dark:text-red-400'
-  : 'text-emerald-600 dark:text-emerald-400'
+  ? 'text-[#b85c4b] dark:text-[#df9a8c]'
+  : 'text-[#63816b] dark:text-[#a0b8a5]'
 const hiddenBg = isWrong ? 'bg-red-50 dark:bg-red-500/10' : 'bg-emerald-50 dark:bg-emerald-500/10'
 const hiddenColor = isWrong
   ? 'text-red-500 dark:text-red-400'
@@ -109,16 +115,6 @@ let suppressInput = false
 
 const showHidden = computed(() => props.hidden)
 
-const visibilityButtonClass = computed(() => {
-  if (isWrong) {
-    return showHidden.value
-      ? 'border-red-500 bg-red-500 text-white hover:bg-red-600'
-      : 'border-red-200 bg-white text-red-600 hover:bg-red-50 dark:border-red-500/30 dark:bg-[#1a1a18] dark:text-red-400 dark:hover:bg-red-500/10'
-  }
-  return showHidden.value
-    ? 'border-emerald-500 bg-emerald-500 text-white hover:bg-emerald-600'
-    : 'border-emerald-200 bg-white text-emerald-600 hover:bg-emerald-50 dark:border-emerald-500/30 dark:bg-[#1a1a18] dark:text-emerald-400 dark:hover:bg-emerald-500/10'
-})
 
 function syncContent() {
   nextTick(() => {
@@ -288,7 +284,7 @@ function onScreenshotCapture(dataUrl: string) {
 <template>
   <!-- @AI-VIEW: DOM 可自由重构。样式仅限 Tailwind CSS 工具类。严禁内联 style 或自定义 CSS。 -->
   <div
-    class="answer-panel flex-1 flex flex-col overflow-hidden overscroll-contain rounded-lg border group"
+    class="answer-panel flex-1 min-h-0 flex flex-col overflow-hidden overscroll-contain rounded-lg border group"
     :class="panelBg"
     @mousedown="emit('activate-formatting', type)"
   >
@@ -298,10 +294,26 @@ function onScreenshotCapture(dataUrl: string) {
     >
       <span class="w-2 h-2 rounded-full" :class="dotClass" />
       {{ label }}
+      <button
+        type="button"
+        class="answer-visibility-action ml-auto inline-flex shrink-0 items-center gap-1 rounded-md text-xs font-normal"
+        :data-testid="isWrong ? 'wrong-answer-toggle' : 'correct-answer-toggle'"
+        :aria-label="showHidden ? `显示${label}` : `隐藏${label}`"
+        :aria-expanded="!showHidden"
+        :title="showHidden ? `显示${label}` : `隐藏${label}`"
+        @click.stop="emit('reveal')"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+          <circle cx="12" cy="12" r="3" />
+          <path v-if="!showHidden" d="M2 2l20 20" />
+        </svg>
+        {{ showHidden ? '显示' : '隐藏' }}
+      </button>
 
       <button
-        v-if="layoutEditing"
-        class="ml-1 inline-flex touch-none cursor-grab items-center gap-1 rounded-md border border-current px-2 py-0.5 text-[10px] font-semibold opacity-70 transition-opacity hover:opacity-100 active:cursor-grabbing"
+        v-show="layoutEditing"
+        class="panel-drag-button ml-1 inline-flex touch-none cursor-grab items-center gap-1 rounded-md border border-current px-2 py-0.5 text-[10px] font-semibold opacity-70 transition-opacity hover:opacity-100 active:cursor-grabbing"
         :title="`拖动${label}板块换位`"
         :aria-label="`拖动${label}板块换位`"
         @pointerdown.stop="emit('layout-drag-start', $event)"
@@ -311,77 +323,83 @@ function onScreenshotCapture(dataUrl: string) {
       </button>
 
       <!-- Panel-specific image insertion tools -->
-      <div v-if="!showHidden" class="ml-auto flex items-center gap-0.5">
-        <button
-          class="w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/5 transition-all active:scale-90"
-          title="截屏"
-          @click="screenshotOpen = true"
-        >
-          <svg
-            width="13"
-            height="13"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
+      <Teleport defer to="#shared-image-tools"
+        ><div v-show="formattingActive && !showHidden" class="flex items-center gap-1">
+          <button
+            class="w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/5 transition-all active:scale-90"
+            title="截屏"
+            @click="screenshotOpen = true"
           >
-            <rect x="2" y="2" width="20" height="20" rx="2" ry="2" />
-            <circle cx="8.5" cy="8.5" r="1.5" />
-            <polyline points="21 15 16 10 5 21" />
-          </svg>
-        </button>
-        <button
-          class="w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/5 transition-all active:scale-90"
-          title="拍照"
-          @click="camOpen = true"
-        >
-          <svg
-            width="13"
-            height="13"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <rect x="2" y="2" width="20" height="20" rx="2" ry="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <polyline points="21 15 16 10 5 21" />
+            </svg>
+          </button>
+          <button
+            class="w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/5 transition-all active:scale-90"
+            title="拍照"
+            @click="camOpen = true"
           >
-            <path
-              d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
-            />
-            <circle cx="12" cy="13" r="4" />
-          </svg>
-        </button>
-        <button
-          class="w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/5 transition-all active:scale-90"
-          title="导入图片"
-          @click="openFilePicker"
-        >
-          <svg
-            width="13"
-            height="13"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <path
+                d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"
+              />
+              <circle cx="12" cy="13" r="4" />
+            </svg>
+          </button>
+          <button
+            class="w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/5 transition-all active:scale-90"
+            title="导入图片"
+            @click="openFilePicker"
           >
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-            <circle cx="8.5" cy="8.5" r="1.5" />
-            <polyline points="21 15 16 10 5 21" />
-          </svg>
-        </button>
-        <input ref="fileInput" type="file" accept="image/*" class="hidden" @change="onFileChange" />
-      </div>
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <polyline points="21 15 16 10 5 21" />
+            </svg>
+          </button>
+          <input
+            ref="fileInput"
+            type="file"
+            accept="image/*"
+            class="hidden"
+            @change="onFileChange"
+          /></div
+      ></Teleport>
     </div>
 
     <div
       v-if="!showHidden"
       ref="wrapperRef"
-      class="flex-1 overflow-y-auto overscroll-contain"
+      class="flex-1 min-h-0 overflow-y-auto overscroll-contain"
       @wheel="onBodyWheel"
     >
       <div ref="canvasContainerRef" :style="{ position: 'relative', minHeight: '100%' }">
         <div
           ref="bodyRef"
           class="panel-body px-3.5 py-3 text-base leading-relaxed md-content outline-none text-gray-800 dark:text-gray-200 min-h-full"
-          :style="{ fontSize: fontSizeStyle }"
           :contenteditable="drawingEnabled ? 'false' : 'true'"
           :data-placeholder="'输入' + label + '…'"
           @input="onInput"
@@ -404,49 +422,18 @@ function onScreenshotCapture(dataUrl: string) {
       <span class="text-sm font-medium">{{ label }}已隐藏</span>
     </div>
 
-    <div class="flex shrink-0 justify-center border-t px-3 py-2" :class="[headerBg, headerBorder]">
-      <button
-        type="button"
-        class="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-all active:scale-95"
-        :class="visibilityButtonClass"
-        :data-testid="isWrong ? 'wrong-answer-toggle' : 'correct-answer-toggle'"
-        :title="showHidden ? `显示${label}` : `隐藏${label}`"
-        @click="emit('reveal')"
-      >
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          aria-hidden="true"
-        >
-          <template v-if="showHidden">
-            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-            <circle cx="12" cy="12" r="3" />
-          </template>
-          <template v-else>
-            <path
-              d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"
-            />
-            <line x1="1" y1="1" x2="23" y2="23" />
-          </template>
-        </svg>
-        {{ showHidden ? `显示${label}` : `隐藏${label}` }}
-      </button>
-    </div>
+
   </div>
 
-  <Teleport v-if="formattingActive && !showHidden" to="#rich-text-formatting-toolbar">
+  <Teleport v-if="formattingActive && !showHidden" defer to="#rich-text-formatting-toolbar">
     <RichTextSizeControls
       :image-selected="hasSelectedImage"
       :image-width="imageWidth"
-      :font-size="fontSize"
       :text-selected="hasTextSelection"
       :bold="isBold"
+      :bold-mixed="boldMixed"
+      :highlight-color="highlightColor"
       @preserve-selection="captureSelection"
-      @font-size="applyFontSize"
       @toggle-bold="toggleBold"
       @highlight="applyHighlight"
       @image-width="applyImageWidth"
@@ -454,7 +441,7 @@ function onScreenshotCapture(dataUrl: string) {
     />
   </Teleport>
 
-  <CameraCapture v-if="camOpen" @capture="onCameraCapture" @close="camOpen = false" />
+  <Transition name="modal"><CameraCapture v-if="camOpen" @capture="onCameraCapture" @close="camOpen = false" /></Transition>
 
   <ScreenshotPicker
     v-if="screenshotOpen"

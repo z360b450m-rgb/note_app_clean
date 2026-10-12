@@ -2,8 +2,9 @@
 // @AI-NOTE: 设置面板组件 —— 设置读写通过 useReviewSettings/
 // useDarkMode Hook。禁止直接操作 localStorage 或存储。
 import { reactive, ref, watch } from 'vue'
+import { useEditorPreferences } from '@/composables/useEditorPreferences'
+import { useNotebooks } from '@/composables/useNotebooks'
 import { useReviewSettings } from '@/composables/useReviewSettings'
-
 
 defineProps<{
   isDark: boolean
@@ -18,6 +19,8 @@ const emit = defineEmits<{
   logout: []
 }>()
 
+const { preferences } = useEditorPreferences()
+const { notebooks } = useNotebooks()
 const { settings, defaults } = useReviewSettings()
 
 const draft = reactive({ ...settings.value })
@@ -58,12 +61,9 @@ function save() {
 <template>
   <!-- @AI-VIEW: DOM 可自由重构。样式仅限 Tailwind CSS 工具类。严禁内联 style 或自定义 CSS。 -->
   <div>
-    <!-- Backdrop -->
-    <div class="fixed inset-0 z-40 bg-black/15" @click="emit('close')" />
-
     <!-- Panel -->
     <div
-      class="fixed right-0 top-0 bottom-0 z-50 w-[320px] bg-white dark:bg-[#141413] shadow-xl border-l border-gray-100 dark:border-[#2e2e2c] overflow-y-auto"
+      class="settings-page settings-drawer fixed right-0 top-0 bottom-0 z-50 w-[320px] bg-white dark:bg-[#141413] shadow-xl border-l border-gray-100 dark:border-[#2e2e2c] overflow-y-auto"
     >
       <!-- Header -->
       <div
@@ -106,276 +106,319 @@ function save() {
       </div>
 
       <div class="p-5 space-y-5">
-        <!-- Dark mode -->
-        <div class="flex items-center justify-between">
-          <div>
-            <div class="text-[13px] font-medium text-gray-700 dark:text-brand-light-gray">
-              护眼模式
-            </div>
-            <div class="text-[11px] text-gray-400 dark:text-brand-mid mt-0.5">切换界面颜色主题</div>
-          </div>
-          <button
-            class="relative w-10 h-5 rounded-full transition-colors duration-200"
-            :class="isDark ? 'bg-accent' : 'bg-gray-300 dark:bg-[#2e2e2c]'"
-            @click="emit('toggleDark')"
-          >
-            <span
-              class="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all duration-200"
-              :class="isDark ? 'left-[22px]' : 'left-0.5'"
-            />
-          </button>
-        </div>
-
-        <!-- Keyboard shortcuts -->
-        <div class="pt-4 border-t border-gray-100 dark:border-[#2e2e2c]">
-          <button
-            class="w-full flex items-center justify-between text-[13px] font-medium text-gray-700 dark:text-brand-light-gray hover:text-accent transition-colors"
-            @click="shortcutsExpanded = !shortcutsExpanded"
-          >
-            <span>快捷键</span>
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              class="transition-transform duration-200"
-              :class="shortcutsExpanded ? 'rotate-180' : ''"
-            >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-
-          <div v-if="shortcutsExpanded" class="mt-3 space-y-1.5">
-            <div
-              v-for="sc in shortcuts"
-              :key="sc.keys.join('+')"
-              class="flex items-center justify-between py-1.5"
-            >
-              <span class="text-[12px] text-gray-600 dark:text-brand-light-gray">{{
-                sc.desc
-              }}</span>
-              <span class="flex items-center gap-1">
-                <span
-                  v-for="k in sc.keys"
-                  :key="k"
-                  class="inline-flex items-center px-1.5 py-0.5 text-[11px] font-mono rounded border border-gray-200 dark:border-[#2e2e2c] bg-gray-50 dark:bg-[#1e1e1c] text-gray-500 dark:text-brand-mid min-w-[22px] justify-center"
-                  >{{ k }}</span
-                >
-                <span
-                  class="text-[10px] text-gray-400 dark:text-brand-mid ml-1.5 w-14 text-right"
-                  >{{ sc.mode }}</span
-                >
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Review settings -->
-        <div class="pt-4 border-t border-gray-100 dark:border-[#2e2e2c]">
-          <button
-            class="w-full flex items-center justify-between text-[13px] font-medium text-gray-700 dark:text-brand-light-gray hover:text-accent transition-colors"
-            data-testid="review-settings-toggle"
-            @click="reviewExpanded = !reviewExpanded"
-          >
-            <span>复习设置</span>
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              class="transition-transform duration-200"
-              :class="reviewExpanded ? 'rotate-180' : ''"
-            >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-
-          <div v-if="reviewExpanded" class="mt-3 space-y-3">
-            <div class="text-[11px] text-gray-400 dark:text-brand-mid">
-              基于艾宾浩斯遗忘曲线设置复习间隔：1天 → 3天 → 7天 → 放大……
-            </div>
-
+        <div class="settings-column">
+          <div class="flex items-center justify-between">
             <div>
-              <label class="text-[12px] font-medium text-gray-600 dark:text-brand-light-gray"
-                >首次复习</label
-              >
-              <div class="flex items-center gap-2 mt-1">
-                <input
-                  type="number"
-                  min="0"
-                  max="365"
-                  data-testid="first-review-days"
-                  :value="draft.firstReviewDays"
-                  @input="
-                    (e: Event) => {
-                      const v = parseInt((e.target as HTMLInputElement).value)
-                      if (v >= 0) draft.firstReviewDays = v
-                    }
-                  "
-                  class="w-16 px-2.5 py-1.5 text-[13px] rounded-lg border border-gray-200 dark:border-[#2e2e2c] bg-gray-50 dark:bg-[#1e1e1c] text-gray-700 dark:text-brand-light-gray focus:outline-none focus:border-accent/40 transition-colors"
-                />
-                <span class="text-[12px] text-gray-400 dark:text-brand-mid">天后复习</span>
-                <span class="text-[11px] text-accent/70 ml-auto"
-                  >建议 {{ defaults.firstReviewDays }} 天</span
-                >
+              <h3 class="mb-4 text-base font-semibold">外观与编辑</h3>
+              <div class="text-[13px] font-medium text-gray-700 dark:text-brand-light-gray">
+                深色模式
+              </div>
+              <div class="text-[11px] text-gray-400 dark:text-brand-mid mt-0.5">
+                切换界面颜色主题
               </div>
             </div>
-
-            <div>
-              <label class="text-[12px] font-medium text-gray-600 dark:text-brand-light-gray"
-                >未掌握知识点</label
-              >
-              <div class="flex items-center gap-2 mt-1">
-                <input
-                  type="number"
-                  min="1"
-                  max="365"
-                  :value="draft.unmasteredDays"
-                  @input="
-                    (e: Event) => {
-                      const v = parseInt((e.target as HTMLInputElement).value)
-                      if (v > 0) draft.unmasteredDays = v
-                    }
-                  "
-                  class="w-16 px-2.5 py-1.5 text-[13px] rounded-lg border border-gray-200 dark:border-[#2e2e2c] bg-gray-50 dark:bg-[#1e1e1c] text-gray-700 dark:text-brand-light-gray focus:outline-none focus:border-accent/40 transition-colors"
-                />
-                <span class="text-[12px] text-gray-400 dark:text-brand-mid">天后复习</span>
-                <span class="text-[11px] text-accent/70 ml-auto"
-                  >建议 {{ defaults.unmasteredDays }} 天</span
-                >
-              </div>
-            </div>
-
-            <div>
-              <label class="text-[12px] font-medium text-gray-600 dark:text-brand-light-gray"
-                >已掌握知识点</label
-              >
-              <div class="flex items-center gap-2 mt-1">
-                <input
-                  type="number"
-                  min="1"
-                  max="365"
-                  :value="draft.masteredDays"
-                  @input="
-                    (e: Event) => {
-                      const v = parseInt((e.target as HTMLInputElement).value)
-                      if (v > 0) draft.masteredDays = v
-                    }
-                  "
-                  class="w-16 px-2.5 py-1.5 text-[13px] rounded-lg border border-gray-200 dark:border-[#2e2e2c] bg-gray-50 dark:bg-[#1e1e1c] text-gray-700 dark:text-brand-light-gray focus:outline-none focus:border-accent/40 transition-colors"
-                />
-                <span class="text-[12px] text-gray-400 dark:text-brand-mid">天后复习</span>
-                <span class="text-[11px] text-accent/70 ml-auto"
-                  >建议 {{ defaults.masteredDays }} 天</span
-                >
-              </div>
-            </div>
-
-            <div>
-              <label class="text-[12px] font-medium text-gray-600 dark:text-brand-light-gray"
-                >增长系数</label
-              >
-              <div class="flex items-center gap-2 mt-1">
-                <input
-                  type="number"
-                  min="1.1"
-                  max="5"
-                  step="0.1"
-                  :value="draft.growthFactor"
-                  @input="
-                    (e: Event) => {
-                      const v = parseFloat((e.target as HTMLInputElement).value)
-                      if (v >= 1.1) draft.growthFactor = v
-                    }
-                  "
-                  class="w-16 px-2.5 py-1.5 text-[13px] rounded-lg border border-gray-200 dark:border-[#2e2e2c] bg-gray-50 dark:bg-[#1e1e1c] text-gray-700 dark:text-brand-light-gray focus:outline-none focus:border-accent/40 transition-colors"
-                />
-                <span class="text-[12px] text-gray-400 dark:text-brand-mid">倍</span>
-                <span class="text-[11px] text-accent/70 ml-auto"
-                  >建议 {{ defaults.growthFactor }}x</span
-                >
-              </div>
-            </div>
-
-            <div>
-              <label class="text-[12px] font-medium text-gray-600 dark:text-brand-light-gray"
-                >最大间隔</label
-              >
-              <div class="flex items-center gap-2 mt-1">
-                <input
-                  type="number"
-                  min="7"
-                  max="730"
-                  :value="draft.maxInterval"
-                  @input="
-                    (e: Event) => {
-                      const v = parseInt((e.target as HTMLInputElement).value)
-                      if (v > 0) draft.maxInterval = v
-                    }
-                  "
-                  class="w-16 px-2.5 py-1.5 text-[13px] rounded-lg border border-gray-200 dark:border-[#2e2e2c] bg-gray-50 dark:bg-[#1e1e1c] text-gray-700 dark:text-brand-light-gray focus:outline-none focus:border-accent/40 transition-colors"
-                />
-                <span class="text-[12px] text-gray-400 dark:text-brand-mid">天</span>
-                <span class="text-[11px] text-accent/70 ml-auto"
-                  >建议 {{ defaults.maxInterval }} 天</span
-                >
-              </div>
-            </div>
-
             <button
-              class="w-full mt-3 px-4 py-2 rounded-lg bg-accent text-white text-[13px] font-medium hover:brightness-110 transition-all active:scale-[0.98]"
-              data-testid="save-review-settings"
-              @click="save"
+              class="ui-switch relative w-10 h-5 rounded-full"
+              :aria-pressed="isDark"
+              aria-label="切换深色模式"
+              :class="isDark ? 'bg-accent' : 'bg-gray-300 dark:bg-[#2e2e2c]'"
+              @click="emit('toggleDark')"
             >
-              保存复习设置
+              <span
+                class="ui-switch-thumb absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm"
+              />
+            </button>
+          </div>
+          <div class="editor-preference-card">
+            <h3 class="mb-4 text-base font-semibold">编辑偏好</h3>
+            <div class="preference-row">
+              <div>
+                自动保存
+                <p class="text-xs text-brand-mid">停止输入后自动保存；关闭后可用 Ctrl + S 保存</p>
+              </div>
+              <button
+                class="ui-switch relative w-10 h-5 rounded-full"
+                :class="preferences.autoSave ? 'bg-accent' : 'bg-gray-300'"
+                :aria-pressed="preferences.autoSave"
+                aria-label="自动保存"
+                @click="preferences.autoSave = !preferences.autoSave"
+              >
+                <span class="ui-switch-thumb absolute top-0.5 left-0.5 w-4 h-4 rounded-full" />
+              </button>
+            </div>
+            <label class="preference-row"
+              >正文大小<select v-model.number="preferences.fontSize">
+                <option
+                  v-for="size in [12, 16, 18, 20, 24, 28, 32, 36, 48]"
+                  :key="size"
+                  :value="size"
+                >
+                  {{ size }} px
+                </option>
+              </select></label
+            >
+            <label class="preference-row"
+              >默认笔记本<select v-model="preferences.defaultNotebookId">
+                <option value="">恢复上次打开的笔记本</option>
+                <option v-for="notebook in notebooks" :key="notebook.id" :value="notebook.id">
+                  {{ notebook.name }}
+                </option>
+              </select></label
+            >
+            <p class="mt-3 text-xs text-brand-mid">
+              设置即时保存，默认笔记本在下次进入应用时生效。
+            </p>
+          </div>
+          <div class="pt-4 border-t border-gray-100 dark:border-[#2e2e2c]">
+            <button
+              class="w-full flex items-center justify-between text-[13px] font-medium text-gray-700 dark:text-brand-light-gray hover:text-accent transition-colors"
+              data-testid="review-settings-toggle"
+              @click="reviewExpanded = !reviewExpanded"
+            >
+              <span>复习设置</span>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                class="transition-transform duration-200"
+                :class="reviewExpanded ? 'rotate-180' : ''"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+
+            <div v-if="reviewExpanded" class="mt-3 space-y-3">
+              <div class="text-[11px] text-gray-400 dark:text-brand-mid">
+                基于艾宾浩斯遗忘曲线设置复习间隔：1天 → 3天 → 7天 → 放大……
+              </div>
+
+              <div>
+                <label class="text-[12px] font-medium text-gray-600 dark:text-brand-light-gray"
+                  >首次复习</label
+                >
+                <div class="flex items-center gap-2 mt-1">
+                  <input
+                    type="number"
+                    min="0"
+                    max="365"
+                    data-testid="first-review-days"
+                    :value="draft.firstReviewDays"
+                    @input="
+                      (e: Event) => {
+                        const v = parseInt((e.target as HTMLInputElement).value)
+                        if (v >= 0) draft.firstReviewDays = v
+                      }
+                    "
+                    class="w-16 px-2.5 py-1.5 text-[13px] rounded-lg border border-gray-200 dark:border-[#2e2e2c] bg-gray-50 dark:bg-[#1e1e1c] text-gray-700 dark:text-brand-light-gray focus:outline-none focus:border-accent/40 transition-colors"
+                  />
+                  <span class="text-[12px] text-gray-400 dark:text-brand-mid">天后复习</span>
+                  <span class="text-[11px] text-accent/70 ml-auto"
+                    >建议 {{ defaults.firstReviewDays }} 天</span
+                  >
+                </div>
+              </div>
+
+              <div>
+                <label class="text-[12px] font-medium text-gray-600 dark:text-brand-light-gray"
+                  >未掌握知识点</label
+                >
+                <div class="flex items-center gap-2 mt-1">
+                  <input
+                    type="number"
+                    min="1"
+                    max="365"
+                    :value="draft.unmasteredDays"
+                    @input="
+                      (e: Event) => {
+                        const v = parseInt((e.target as HTMLInputElement).value)
+                        if (v > 0) draft.unmasteredDays = v
+                      }
+                    "
+                    class="w-16 px-2.5 py-1.5 text-[13px] rounded-lg border border-gray-200 dark:border-[#2e2e2c] bg-gray-50 dark:bg-[#1e1e1c] text-gray-700 dark:text-brand-light-gray focus:outline-none focus:border-accent/40 transition-colors"
+                  />
+                  <span class="text-[12px] text-gray-400 dark:text-brand-mid">天后复习</span>
+                  <span class="text-[11px] text-accent/70 ml-auto"
+                    >建议 {{ defaults.unmasteredDays }} 天</span
+                  >
+                </div>
+              </div>
+
+              <div>
+                <label class="text-[12px] font-medium text-gray-600 dark:text-brand-light-gray"
+                  >已掌握知识点</label
+                >
+                <div class="flex items-center gap-2 mt-1">
+                  <input
+                    type="number"
+                    min="1"
+                    max="365"
+                    :value="draft.masteredDays"
+                    @input="
+                      (e: Event) => {
+                        const v = parseInt((e.target as HTMLInputElement).value)
+                        if (v > 0) draft.masteredDays = v
+                      }
+                    "
+                    class="w-16 px-2.5 py-1.5 text-[13px] rounded-lg border border-gray-200 dark:border-[#2e2e2c] bg-gray-50 dark:bg-[#1e1e1c] text-gray-700 dark:text-brand-light-gray focus:outline-none focus:border-accent/40 transition-colors"
+                  />
+                  <span class="text-[12px] text-gray-400 dark:text-brand-mid">天后复习</span>
+                  <span class="text-[11px] text-accent/70 ml-auto"
+                    >建议 {{ defaults.masteredDays }} 天</span
+                  >
+                </div>
+              </div>
+
+              <div>
+                <label class="text-[12px] font-medium text-gray-600 dark:text-brand-light-gray"
+                  >增长系数</label
+                >
+                <div class="flex items-center gap-2 mt-1">
+                  <input
+                    type="number"
+                    min="1.1"
+                    max="5"
+                    step="0.1"
+                    :value="draft.growthFactor"
+                    @input="
+                      (e: Event) => {
+                        const v = parseFloat((e.target as HTMLInputElement).value)
+                        if (v >= 1.1) draft.growthFactor = v
+                      }
+                    "
+                    class="w-16 px-2.5 py-1.5 text-[13px] rounded-lg border border-gray-200 dark:border-[#2e2e2c] bg-gray-50 dark:bg-[#1e1e1c] text-gray-700 dark:text-brand-light-gray focus:outline-none focus:border-accent/40 transition-colors"
+                  />
+                  <span class="text-[12px] text-gray-400 dark:text-brand-mid">倍</span>
+                  <span class="text-[11px] text-accent/70 ml-auto"
+                    >建议 {{ defaults.growthFactor }}x</span
+                  >
+                </div>
+              </div>
+
+              <div>
+                <label class="text-[12px] font-medium text-gray-600 dark:text-brand-light-gray"
+                  >最大间隔</label
+                >
+                <div class="flex items-center gap-2 mt-1">
+                  <input
+                    type="number"
+                    min="7"
+                    max="730"
+                    :value="draft.maxInterval"
+                    @input="
+                      (e: Event) => {
+                        const v = parseInt((e.target as HTMLInputElement).value)
+                        if (v > 0) draft.maxInterval = v
+                      }
+                    "
+                    class="w-16 px-2.5 py-1.5 text-[13px] rounded-lg border border-gray-200 dark:border-[#2e2e2c] bg-gray-50 dark:bg-[#1e1e1c] text-gray-700 dark:text-brand-light-gray focus:outline-none focus:border-accent/40 transition-colors"
+                  />
+                  <span class="text-[12px] text-gray-400 dark:text-brand-mid">天</span>
+                  <span class="text-[11px] text-accent/70 ml-auto"
+                    >建议 {{ defaults.maxInterval }} 天</span
+                  >
+                </div>
+              </div>
+
+              <button
+                class="w-full mt-3 px-4 py-2 rounded-lg bg-accent text-white text-[13px] font-medium hover:brightness-110 transition-all active:scale-[0.98]"
+                data-testid="save-review-settings"
+                @click="save"
+              >
+                保存复习设置
+              </button>
+            </div>
+          </div>
+          <div class="pt-4 border-t border-gray-100 dark:border-[#2e2e2c]">
+            <div class="text-[13px] font-medium text-gray-700 dark:text-brand-light-gray mb-1.5">
+              数据目录
+            </div>
+            <div class="text-[11px] text-gray-400 dark:text-brand-mid mb-3">
+              更改错题数据的本地保存位置
+            </div>
+            <button
+              class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-[#2e2e2c] bg-gray-50 dark:bg-[#1e1e1c] text-[13px] text-gray-600 dark:text-brand-light-gray hover:bg-gray-100 dark:hover:bg-[#2a2a28] transition-all duration-200 ease-out active:scale-[0.98]"
+              :class="{ 'opacity-50 pointer-events-none': !isElectron }"
+              :disabled="!isElectron"
+              @click="emit('changeDataDir')"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+                />
+              </svg>
+              {{ isElectron ? '更改保存目录' : '仅桌面端可用' }}
+            </button>
+          </div>
+          <div class="pt-4 border-t border-gray-100 dark:border-[#2e2e2c]">
+            <div class="text-[13px] font-medium text-gray-700 dark:text-brand-light-gray mb-1.5">
+              账号
+            </div>
+            <div class="truncate text-[11px] text-gray-400 dark:text-brand-mid mb-3">
+              {{ userEmail }}
+            </div>
+            <button
+              class="w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] font-medium text-red-600 transition-colors hover:bg-red-100 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-300 dark:hover:bg-red-950/40"
+              @click="emit('logout')"
+            >
+              退出登录
             </button>
           </div>
         </div>
-
-        <!-- Data directory -->
-        <div class="pt-4 border-t border-gray-100 dark:border-[#2e2e2c]">
-          <div class="text-[13px] font-medium text-gray-700 dark:text-brand-light-gray mb-1.5">
-            数据目录
-          </div>
-          <div class="text-[11px] text-gray-400 dark:text-brand-mid mb-3">
-            更改错题数据的本地保存位置
-          </div>
-          <button
-            class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-gray-200 dark:border-[#2e2e2c] bg-gray-50 dark:bg-[#1e1e1c] text-[13px] text-gray-600 dark:text-brand-light-gray hover:bg-gray-100 dark:hover:bg-[#2a2a28] transition-all duration-200 ease-out active:scale-[0.98]"
-            :class="{ 'opacity-50 pointer-events-none': !isElectron }"
-            :disabled="!isElectron"
-            @click="emit('changeDataDir')"
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
+        <div class="settings-column settings-shortcuts-column">
+          <div class="pt-4 border-t border-gray-100 dark:border-[#2e2e2c]">
+            <button
+              class="w-full flex items-center justify-between text-[13px] font-medium text-gray-700 dark:text-brand-light-gray hover:text-accent transition-colors"
+              @click="shortcutsExpanded = !shortcutsExpanded"
             >
-              <path
-                d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
-              />
-            </svg>
-            {{ isElectron ? '更改保存目录' : '仅桌面端可用' }}
-          </button>
-        </div>
+              <span>快捷键</span>
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                class="transition-transform duration-200"
+                :class="shortcutsExpanded ? 'rotate-180' : ''"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
 
-        <!-- Account -->
-        <div class="pt-4 border-t border-gray-100 dark:border-[#2e2e2c]">
-          <div class="text-[13px] font-medium text-gray-700 dark:text-brand-light-gray mb-1.5">账号</div>
-          <div class="truncate text-[11px] text-gray-400 dark:text-brand-mid mb-3">{{ userEmail }}</div>
-          <button
-            class="w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] font-medium text-red-600 transition-colors hover:bg-red-100 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-300 dark:hover:bg-red-950/40"
-            @click="emit('logout')"
-          >
-            退出登录
-          </button>
+            <div v-if="shortcutsExpanded" class="mt-3 space-y-1.5">
+              <div
+                v-for="sc in shortcuts"
+                :key="sc.keys.join('+')"
+                class="flex items-center justify-between py-1.5"
+              >
+                <span class="text-[12px] text-gray-600 dark:text-brand-light-gray">{{
+                  sc.desc
+                }}</span>
+                <span class="flex items-center gap-1">
+                  <span
+                    v-for="k in sc.keys"
+                    :key="k"
+                    class="inline-flex items-center px-1.5 py-0.5 text-[11px] font-mono rounded border border-gray-200 dark:border-[#2e2e2c] bg-gray-50 dark:bg-[#1e1e1c] text-gray-500 dark:text-brand-mid min-w-[22px] justify-center"
+                    >{{ k }}</span
+                  >
+                  <span
+                    class="text-[10px] text-gray-400 dark:text-brand-mid ml-1.5 w-14 text-right"
+                    >{{ sc.mode }}</span
+                  >
+                </span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

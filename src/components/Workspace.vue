@@ -423,9 +423,12 @@ function onWheel(e: WheelEvent) {
           class="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ease-out active:scale-95"
           :class="
             activeTool === 'pen'
-              ? 'bg-gray-100 dark:bg-[#1e1e1c] text-gray-800 dark:text-brand-light'
+              ? 'bg-accent/10 text-accent ring-1 ring-accent/40'
               : 'text-gray-400 dark:text-brand-mid hover:text-gray-600 dark:text-brand-light-gray'
           "
+          type="button"
+          :aria-pressed="activeTool === 'pen'"
+          title="使用画笔"
           @click="emit('set-tool', 'pen')"
         >
           <svg
@@ -446,25 +449,47 @@ function onWheel(e: WheelEvent) {
         <button
           v-for="c in PEN_COLORS"
           :key="c.code"
-          class="w-6 h-6 rounded-full transition-all duration-200 ease-out active:scale-90 border-2 flex-shrink-0"
+          type="button"
+          :aria-label="`${c.name}色画笔`"
+          :aria-pressed="penColor === c.code && activeTool === 'pen'"
+          class="w-6 h-6 rounded-full transition-all duration-200 ease-out active:scale-90 border-2 flex-shrink-0 flex items-center justify-center"
           :class="
             penColor === c.code && activeTool === 'pen'
-              ? 'border-gray-800 scale-110'
+              ? 'border-white dark:border-[#141413] ring-2 ring-accent ring-offset-1 ring-offset-white dark:ring-offset-[#141413] scale-110'
               : 'border-transparent hover:scale-105'
           "
           :style="{ backgroundColor: c.code }"
           :title="c.name"
           @click="emit('set-color', c.code)"
-        />
+        >
+          <svg
+            v-if="penColor === c.code && activeTool === 'pen'"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="3"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="text-white drop-shadow"
+            aria-hidden="true"
+          >
+            <path d="m5 12 4 4 10-10" />
+          </svg>
+        </button>
 
         <div class="w-px h-4 bg-gray-200" />
         <button
           class="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ease-out active:scale-95"
           :class="
             activeTool === 'eraser'
-              ? 'bg-gray-100 dark:bg-[#1e1e1c] text-gray-800 dark:text-brand-light'
+              ? 'bg-accent/10 text-accent ring-1 ring-accent/40'
               : 'text-gray-400 dark:text-brand-mid hover:text-gray-600 dark:text-brand-light-gray'
           "
+          type="button"
+          :aria-pressed="activeTool === 'eraser'"
+          title="使用橡皮"
           @click="emit('set-tool', 'eraser')"
         >
           <svg
@@ -487,6 +512,7 @@ function onWheel(e: WheelEvent) {
         <div class="flex items-center gap-1.5">
           <input
             type="range"
+            :aria-label="activeTool === 'pen' ? '画笔粗细' : '橡皮大小'"
             :min="1"
             :max="activeTool === 'pen' ? 12 : 48"
             :value="activeTool === 'pen' ? penSize : eraserSize"
