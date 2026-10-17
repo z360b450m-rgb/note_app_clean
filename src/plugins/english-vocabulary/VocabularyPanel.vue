@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import DOMPurify from 'dompurify'
+import MetadataSelect from '@/components/MetadataSelect.vue'
 import { useVocabularySpeech } from './useSpeech'
 import { vocabularyService } from './service'
 import type { ApkgInspection, VocabularyArchiveSummary, VocabularyProgress } from './service'
@@ -1862,15 +1863,12 @@ onUnmounted(() => {
           <div class="mt-4 grid gap-3 sm:grid-cols-2">
             <label v-for="[target, label] in fieldTargets" :key="target" class="text-sm">
               <span class="mb-1 block text-xs text-[#777]">{{ label }}</span>
-              <select
+              <MetadataSelect
                 v-model="mappings[String(model.id)][target]"
-                class="w-full rounded-[8px] border border-[#ddd] px-3 py-2"
-              >
-                <option :value="undefined">不使用</option>
-                <option v-for="field in model.fields" :key="field.ordinal" :value="field.ordinal">
-                  {{ field.name }}
-                </option>
-              </select>
+                :label="`${model.name}：${label}`"
+                :clearable="false"
+                :options="[{ value: undefined, label: '不使用' }, ...model.fields.map((field) => ({ value: field.ordinal, label: field.name }))]"
+              />
             </label>
           </div>
         </div>
@@ -1912,15 +1910,12 @@ onUnmounted(() => {
         </p>
         <label class="mt-5 block text-sm">
           <span class="mb-1 block text-xs text-[#777]">导入目标</span>
-          <select
+          <MetadataSelect
             v-model="textImportTargetId"
-            class="w-full rounded-[8px] border border-[#ddd] bg-transparent px-3 py-2 outline-none focus:border-[#d97757] dark:border-[#444]"
-          >
-            <option value="__new__">新建词库</option>
-            <option v-for="item in archives" :key="item.id" :value="item.id">
-              追加到：{{ item.name }}（{{ item.wordCount }} 个词）
-            </option>
-          </select>
+            label="导入目标"
+            :clearable="false"
+            :options="[{ value: '__new__', label: '新建词库' }, ...archives.map((item) => ({ value: item.id, label: `追加到：${item.name}（${item.wordCount} 个词）` }))]"
+          />
         </label>
         <label v-if="textImportTargetId === '__new__'" class="mt-4 block text-sm">
           <span class="mb-1 block text-xs text-[#777]">新词库名称</span>

@@ -3,12 +3,20 @@
 // 禁止直接操作存储、编写业务逻辑、管理跨组件状态。
 import { ref, computed, watch } from 'vue'
 import { useNotebooks } from '@/composables/useNotebooks'
-import { entryRepository, reviewLogRepository } from '@/services/db'
-import type { NoteEntry, ReviewLog } from '@/types'
+import { entryRepository } from '@/services/db'
+import { useNotebookMenuData } from '@/composables/useNotebookMenuData'
 import { useDarkMode } from '@/composables/useDarkMode'
 import { useModalAnimations } from '@/composables/useModalAnimations'
 import ReviewAgentEntry from './ReviewAgentEntry.vue'
 import { useDesignExamples } from '@/composables/useDesignExamples'
+import type { AgentEntryTarget } from '@/utils/agentEntryLinks'
+
+const props = withDefaults(
+  defineProps<{ initialNav?: 'home' | 'review'; navigationVersion?: number }>(),
+  {
+    initialNav: 'home',
+  },
+)
 
 const { busy: examplesBusy, error: examplesError, create: createExamples } = useDesignExamples()
 const isDevelopment = import.meta.env.DEV
@@ -21,46 +29,51 @@ const emit = defineEmits<{
   enter: [id: string]
   created: [id: string]
   'open-settings': []
+  'open-entry': [notebookId: string, entryId: string]
 }>()
 
 const { isDark } = useDarkMode()
 const { enterModal, leaveModal } = useModalAnimations()
 const { notebooks, createNotebook, updateNotebook, deleteNotebook, reorderNotebooks } =
   useNotebooks()
-// Load all entries independently — decoupled from the shared entries ref
-// which gets filtered to a single notebook during the page transition.
-const menuEntries = ref<NoteEntry[]>([])
-const menuReviewLogs = ref<ReviewLog[]>([])
-let statsLoadSequence = 0
+// The menu only receives counts; question data is loaded when a notebook opens.
+const {
+  countsByNotebook,
+  subjects: planSubjects,
+  reviewDays,
+  loading: statsLoading,
+  error: statsError,
+  reload: reloadStats,
+  hasEntries,
+  hasReviews,
+  entriesReady,
+  reviewsReady,
+} = useNotebookMenuData(notebooks)
+const entryLinkError = ref('')
 
-watch(
-  () => notebooks.value.map((notebook) => notebook.id),
-  async (notebookIds) => {
-    const sequence = ++statsLoadSequence
-    try {
-      const [entriesByNotebook, logsByNotebook] = await Promise.all([
-        Promise.all(notebookIds.map((notebookId) => entryRepository.getAll(notebookId))),
-        Promise.all(notebookIds.map((notebookId) => reviewLogRepository.getAll(notebookId))),
-      ])
-      if (sequence !== statsLoadSequence) return
-      menuEntries.value = entriesByNotebook.flat()
-      menuReviewLogs.value = logsByNotebook.flat()
-    } catch (error) {
-      console.error('Failed to load notebook menu statistics', error)
-      if (sequence !== statsLoadSequence) return
-      menuEntries.value = []
-      menuReviewLogs.value = []
+async function openAgentEntry(target: AgentEntryTarget) {
+  entryLinkError.value = ''
+  // 只在当前账号的错题本中查找；旧回答仅有题目ID时也能找到所属本。
+  const candidates = notebooks.value.filter(
+    (notebook) => !target.notebookId || notebook.id === target.notebookId,
+  )
+  try {
+    for (const notebook of candidates) {
+      const entry = await entryRepository.get(notebook.id, target.entryId)
+      if (entry) {
+        emit('open-entry', notebook.id, entry.id)
+        return
+      }
     }
-  },
-  { immediate: true },
-)
-
-const entryCountByNotebook = computed(() => {
-  const map: Record<string, number> = {}
-  for (const e of menuEntries.value) {
-    if (e.notebookId) map[e.notebookId] = (map[e.notebookId] || 0) + 1
+    entryLinkError.value = '无法打开原题：题目已删除或不在当前账号的错题本中。'
+  } catch {
+    entryLinkError.value = '暂时无法读取原题，请稍后重试。'
   }
-  return map
+}
+const entryCountByNotebook = computed(() => {
+  return Object.fromEntries(
+    Object.values(countsByNotebook.value).map((item) => [item.notebookId, item.entryCount]),
+  )
 })
 
 const totalEntries = computed(() => {
@@ -69,54 +82,22 @@ const totalEntries = computed(() => {
   return sum
 })
 
-// ── Review stats ──
-const todayStart = new Date()
-todayStart.setHours(0, 0, 0, 0)
-const t0 = todayStart.getTime()
-
-const reviewedToday = computed(() => {
-  return menuReviewLogs.value.filter((l) => l.timestamp >= t0).length
-})
-
-// Entries currently still due (nextReviewDate <= now) — pending, not yet reviewed today
-const stillDue = computed(() => {
-  const now = Date.now()
-  return menuEntries.value.filter((e) => e.nextReviewDate && e.nextReviewDate <= now).length
-})
-
-const stillDueByNotebook = computed(() => {
-  const now = Date.now()
-  const map: Record<string, number> = {}
-  for (const e of menuEntries.value) {
-    if (e.nextReviewDate && e.nextReviewDate <= now && e.notebookId) {
-      map[e.notebookId] = (map[e.notebookId] || 0) + 1
-    }
-  }
-  return map
-})
-
-// Entry id → notebook id lookup for cross-referencing review logs
-const entryNotebookMap = computed(() => {
-  const map: Record<string, string> = {}
-  for (const e of menuEntries.value) {
-    map[e.id] = e.notebookId
-  }
-  return map
-})
-
-// Today's completed reviews per notebook
-const reviewedByNotebook = computed(() => {
-  const map: Record<string, number> = {}
-  for (const log of menuReviewLogs.value) {
-    if (log.timestamp >= t0) {
-      const nbId = entryNotebookMap.value[log.entryId]
-      if (nbId) {
-        map[nbId] = (map[nbId] || 0) + 1
-      }
-    }
-  }
-  return map
-})
+const reviewedToday = computed(() =>
+  Object.values(countsByNotebook.value).reduce((sum, item) => sum + item.reviewedToday, 0),
+)
+const stillDue = computed(() =>
+  Object.values(countsByNotebook.value).reduce((sum, item) => sum + item.dueCount, 0),
+)
+const stillDueByNotebook = computed(() =>
+  Object.fromEntries(
+    Object.values(countsByNotebook.value).map((item) => [item.notebookId, item.dueCount]),
+  ),
+)
+const reviewedByNotebook = computed(() =>
+  Object.fromEntries(
+    Object.values(countsByNotebook.value).map((item) => [item.notebookId, item.reviewedToday]),
+  ),
+)
 
 // Total to review today = completed + still pending (total doesn't decrease as reviews happen)
 const totalDue = computed(() => {
@@ -160,36 +141,27 @@ const randomQuote = quotes[Math.floor(Math.random() * quotes.length)]
 
 // ── Nav ──
 const planDays = computed(() => {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  return Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(today)
-    date.setDate(date.getDate() - 6 + index)
-    const end = new Date(date)
-    end.setDate(end.getDate() + 1)
-    return {
-      label: date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }),
-      count: menuReviewLogs.value.filter(
-        (log) => log.timestamp >= date.getTime() && log.timestamp < end.getTime(),
-      ).length,
-    }
-  })
+  return reviewDays.value.map((day) => ({
+    label: new Date(day.timestamp).toLocaleDateString('zh-CN', {
+      month: 'numeric',
+      day: 'numeric',
+    }),
+    count: day.count,
+  }))
 })
 const planWeekCount = computed(() => planDays.value.reduce((sum, day) => sum + day.count, 0))
 const planChartMax = computed(() => Math.max(1, ...planDays.value.map((day) => day.count)))
 const planCompletion = computed(() =>
   totalDue.value ? Math.round((reviewedToday.value / totalDue.value) * 100) : 0,
 )
-const planSubjects = computed(() => {
-  const counts = new Map<string, number>()
-  menuEntries.value.forEach((entry) => {
-    const name = entry.subject || '未分类'
-    counts.set(name, (counts.get(name) || 0) + 1)
-  })
-  return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count)
-})
 
-const activeNav = ref<'home' | 'review' | 'report' | 'plan'>('home')
+const activeNav = ref<'home' | 'review' | 'report' | 'plan'>(props.initialNav)
+watch(
+  () => props.navigationVersion,
+  () => {
+    activeNav.value = props.initialNav
+  },
+)
 
 // ── Search ──
 const searchQuery = ref('')
@@ -333,7 +305,8 @@ function onNotebookClick(id: string) {
 <template>
   <!-- @AI-VIEW: DOM 可自由重构。样式仅限 Tailwind CSS 工具类。严禁内联 style 或自定义 CSS。 -->
   <div
-    class="flex h-screen bg-[#faf9f5] dark:bg-[#141413] text-brand-dark dark:text-brand-light font-ui leading-relaxed"
+    class="notebook-shell flex h-screen bg-[#faf9f5] dark:bg-[#141413] text-brand-dark dark:text-brand-light font-ui leading-relaxed"
+    :class="{ 'review-workspace': activeNav === 'review' }"
   >
     <!-- ═══════════ LEFT SIDEBAR ═══════════ -->
     <aside
@@ -439,8 +412,11 @@ function onNotebookClick(id: string) {
               nb.name
             }}</span>
             <span class="text-[12px] text-brand-mid dark:text-brand-mid tabular-nums"
-              >{{ entryCountByNotebook[nb.id] || 0 }} · {{ reviewedByNotebook[nb.id] || 0 }}/{{
-                dueByNotebook[nb.id] || 0
+              >{{ hasEntries(nb.id) ? entryCountByNotebook[nb.id] || 0 : '—' }} ·
+              {{
+                hasReviews(nb.id)
+                  ? `${reviewedByNotebook[nb.id] || 0}/${dueByNotebook[nb.id] || 0}`
+                  : '—'
               }}</span
             >
           </button>
@@ -490,9 +466,14 @@ function onNotebookClick(id: string) {
     </aside>
 
     <!-- ═══════════ RIGHT MAIN CONTENT ═══════════ -->
-    <main class="flex-1 flex flex-col min-w-0 overflow-y-auto">
+    <main
+      class="notebook-main flex min-h-0 min-w-0 flex-1 flex-col"
+      :class="activeNav === 'review' ? 'overflow-hidden' : 'overflow-y-auto'"
+    >
       <!-- Top bar -->
-      <div class="flex items-center justify-between px-8 py-4">
+      <div
+        class="notebook-topbar flex min-w-0 shrink-0 flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-6 lg:px-8"
+      >
         <h1
           class="text-[22px] font-ui font-semibold leading-tight text-brand-dark dark:text-brand-light"
         >
@@ -506,9 +487,18 @@ function onNotebookClick(id: string) {
                   : '复习计划'
           }}
         </h1>
-        <div class="flex items-center gap-3">
-          <button v-if="isDevelopment" class="rounded-lg px-3 py-2 text-xs text-accent" :disabled="examplesBusy" @click="openDesignExamples">{{ examplesBusy ? '正在创建示例…' : '设计示例' }}</button>
-          <span v-if="examplesError" role="alert" class="text-xs text-red-500">{{ examplesError }}</span>
+        <div v-if="activeNav === 'home'" class="flex min-w-0 flex-wrap items-center gap-3">
+          <button
+            v-if="isDevelopment"
+            class="rounded-lg px-3 py-2 text-xs text-accent"
+            :disabled="examplesBusy"
+            @click="openDesignExamples"
+          >
+            {{ examplesBusy ? '正在创建示例…' : '设计示例' }}
+          </button>
+          <span v-if="examplesError" role="alert" class="text-xs text-red-500">{{
+            examplesError
+          }}</span>
           <div class="relative">
             <svg
               width="15"
@@ -526,13 +516,38 @@ function onNotebookClick(id: string) {
               v-model="searchQuery"
               type="text"
               placeholder="搜索错题…"
-              class="w-[220px] pl-9 pr-3 py-1.5 rounded-[8px] border border-[#e8e6dc] dark:border-[#2e2e2c] text-[14px] text-brand-dark dark:text-brand-light outline-none focus:border-[#d97757] bg-white dark:bg-[#1e1e1c] placeholder-[#888] dark:placeholder-[#aaa] transition-colors"
+              class="w-full max-w-[220px] pl-9 pr-3 py-1.5 rounded-[8px] border border-[#e8e6dc] dark:border-[#2e2e2c] text-[14px] text-brand-dark dark:text-brand-light outline-none focus:border-[#d97757] bg-white dark:bg-[#1e1e1c] placeholder-[#888] dark:placeholder-[#aaa] transition-colors"
             />
           </div>
         </div>
       </div>
 
-      <div class="flex-1 px-8 pb-12 space-y-6">
+      <div
+        class="notebook-content min-w-0 flex-1"
+        :class="
+          activeNav === 'review'
+            ? 'flex min-h-0 flex-col px-4 pb-4 sm:px-6 lg:px-8'
+            : 'space-y-6 px-4 pb-12 sm:px-6 lg:px-8'
+        "
+      >
+        <div
+          v-if="statsLoading || statsError"
+          class="flex items-center gap-3 rounded-lg border border-brand-light-gray px-4 py-3 text-sm text-brand-mid"
+          data-testid="notebook-stats-status"
+          :role="statsError ? 'alert' : 'status'"
+        >
+          <span>{{ statsLoading ? '正在读取题数和复习统计…' : statsError }}</span>
+          <button
+            v-if="statsError"
+            type="button"
+            class="shrink-0 rounded px-2 py-1 text-accent disabled:opacity-50"
+            :disabled="statsLoading"
+            @click="reloadStats"
+          >
+            重新读取统计
+          </button>
+        </div>
+
         <!-- HOME VIEW -->
         <template v-if="activeNav === 'home'">
           <!-- Stats cards -->
@@ -567,7 +582,7 @@ function onNotebookClick(id: string) {
               <div
                 class="text-[32px] font-semibold tabular-nums text-brand-dark dark:text-brand-light leading-tight"
               >
-                {{ totalEntries }}
+                {{ entriesReady ? totalEntries : '—' }}
               </div>
               <div class="text-[14px] text-gray-600 dark:text-gray-300 mt-2">总题数</div>
             </div>
@@ -585,7 +600,7 @@ function onNotebookClick(id: string) {
               <div
                 class="text-[32px] font-semibold tabular-nums text-brand-dark dark:text-brand-light leading-tight"
               >
-                {{ reviewedToday }}/{{ totalDue }}
+                {{ reviewsReady ? `${reviewedToday}/${totalDue}` : '—' }}
               </div>
               <div class="text-[14px] text-gray-600 dark:text-gray-300 mt-2">
                 今日复习（完成/需复习）
@@ -648,8 +663,12 @@ function onNotebookClick(id: string) {
                   >
                 </div>
                 <span class="flex-[1.5] text-[15px] text-gray-600 dark:text-gray-300 tabular-nums"
-                  >{{ entryCountByNotebook[nb.id] || 0 }} 题 ·
-                  {{ reviewedByNotebook[nb.id] || 0 }}/{{ dueByNotebook[nb.id] || 0 }}</span
+                  >{{ hasEntries(nb.id) ? entryCountByNotebook[nb.id] || 0 : '—' }} 题 ·
+                  {{
+                    hasReviews(nb.id)
+                      ? `${reviewedByNotebook[nb.id] || 0}/${dueByNotebook[nb.id] || 0}`
+                      : '—'
+                  }}</span
                 >
                 <span class="flex-[1.5] text-[15px] text-gray-600 dark:text-gray-300">{{
                   fmtTime(nb.updatedAt)
@@ -741,7 +760,7 @@ function onNotebookClick(id: string) {
 
         <!-- Review plan overview, using real notebook and review data. -->
         <template v-else-if="activeNav === 'plan'">
-          <div class="review-plan space-y-6">
+          <div v-if="entriesReady && reviewsReady" class="review-plan space-y-6">
             <p class="text-sm text-brand-mid">学习概览 · 回顾复习进度，安排接下来的练习</p>
             <div class="grid grid-cols-1 gap-6 xl:grid-cols-3">
               <section class="plan-card rounded-xl bg-white p-6">
@@ -772,7 +791,8 @@ function onNotebookClick(id: string) {
                   {{ planWeekCount }} <span class="text-sm font-normal">次</span>
                 </p>
                 <p class="text-xs text-brand-mid">
-                  共 {{ totalEntries }} 道错题 · {{ notebooks.length }} 本错题本
+                  共 {{ entriesReady ? totalEntries : '—' }} 道错题 ·
+                  {{ notebooks.length }} 本错题本
                 </p>
               </section>
             </div>
@@ -858,7 +878,7 @@ function onNotebookClick(id: string) {
 
         <!-- Review Agent entrance -->
         <template v-else-if="activeNav === 'review'">
-          <ReviewAgentEntry />
+          <ReviewAgentEntry :entry-link-error="entryLinkError" @open-entry="openAgentEntry" />
         </template>
       </div>
     </main>

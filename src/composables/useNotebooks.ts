@@ -1,6 +1,7 @@
 import { ref, computed } from 'vue'
 import type { Notebook } from '@/types'
 import { notebookRepository } from '@/services/db'
+import { getStoredUser } from '@/services/auth'
 
 function genId(): string {
   return 'nb_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7)
@@ -62,7 +63,7 @@ async function deleteNotebook(id: string) {
   if (activeId.value === id) activeId.value = null
 }
 
-const LAST_NOTEBOOK_KEY = 'cuotiben_last_notebook'
+const LAST_NOTEBOOK_KEY = `cuotiben_last_notebook:${getStoredUser()?.id ?? 'local'}`
 
 function selectNotebook(id: string) {
   activeId.value = id

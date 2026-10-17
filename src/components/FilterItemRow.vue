@@ -32,7 +32,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', closeOutside))
       </button>
     </div>
     <Transition name="popover">
-      <div v-if="menuOpen" class="filter-item-menu">
+      <div v-if="menuOpen" class="filter-item-menu" data-ui-menu>
         <button v-if="quickCreate" @click="action('quickCreate')">＋ 新建错题</button>
         <button @click="action('edit')">重命名</button>
         <button class="filter-item-delete" @click="action('delete')">删除</button>

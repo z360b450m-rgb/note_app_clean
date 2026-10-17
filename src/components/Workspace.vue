@@ -6,6 +6,8 @@ import type { NoteEntry, QuestionGroup } from '@/types'
 import type { SortKey, SortDir } from '@/composables/useFilter'
 import type { StatsState } from '@/composables/useStats'
 import type { ReviewOutcome, SessionRecord } from '@/composables/useReview'
+import type { ReviewAttempt } from '@/services/reviewGrading'
+import type { ConfirmedReviewBundle } from '@/services/reviewBundles'
 import type { NotebookPluginManifest } from '@/plugins/types'
 import { PEN_COLORS } from '@/composables/useDrawing'
 import AppSidebar from './AppSidebar.vue'
@@ -23,6 +25,15 @@ const props = defineProps<{
   questionGroups: QuestionGroup[]
   filteredEntries: NoteEntry[]
   activeId: string | null
+  listLoading?: boolean
+  listError?: string
+  detailLoading?: boolean
+  detailError?: string
+  cardLoading?: boolean
+  cardError?: string
+  searchLoading?: boolean
+  searchError?: string
+  loadEntriesContent?: (ids: string[]) => Promise<NoteEntry[]>
   activeEntry: NoteEntry | null | undefined
   activeGroup: QuestionGroup | null | undefined
   activeGroupEntries: NoteEntry[]
@@ -62,6 +73,12 @@ const props = defineProps<{
   isDark: boolean
   currentCard: NoteEntry | null | undefined
   answered: boolean
+  reviewSaving?: boolean
+  bundleStarting?: boolean
+  bundleStartError?: string
+  gradingAttempt?: ReviewAttempt | null
+  gradingError?: string
+  gradingLocked?: boolean
   elapsedMs: number
   reviewedToday: number
   isReviewing: boolean
@@ -85,9 +102,13 @@ const props = defineProps<{
 const emit = defineEmits<{
   // Notebook
   'return-to-menu': []
+  'return-to-agent': []
 
   // Entry selection
   select: [id: string]
+  'retry-list': []
+  'retry-entry': []
+  'retry-card': []
 
   // Filters
   'filter-subject': [subject: string]
@@ -120,10 +141,15 @@ const emit = defineEmits<{
 
   // Review
   'start-review': [force: boolean]
+  'start-review-bundle': [bundle: ConfirmedReviewBundle]
   'exit-review': []
   'toggle-mode': []
   reveal: []
   'rate-card': [r: number | string, note: string, outcome?: ReviewOutcome]
+  'explain-review': [text: string]
+  'next-graded-card': []
+  'retry-grading': []
+  'review-outcome': [outcome: ReviewOutcome]
   'dismiss-summary': []
 
   // Drawing
@@ -185,6 +211,17 @@ const emit = defineEmits<{
 }>()
 
 const mainArea = ref<HTMLElement | null>(null)
+const contentLoading = computed(() =>
+  props.mode === 'review' ? props.cardLoading : props.listLoading || props.detailLoading,
+)
+const contentError = computed(() =>
+  props.mode === 'review' ? props.cardError : props.listError || props.detailError,
+)
+function retryContent() {
+  if (props.mode === 'review') emit('retry-card')
+  else if (props.listError) emit('retry-list')
+  else emit('retry-entry')
+}
 const reviewGroup = computed(() => {
   const groupId = props.currentCard?.groupId
   return groupId ? props.questionGroups.find((group) => group.id === groupId) : undefined
@@ -264,6 +301,7 @@ function onWheel(e: WheelEvent) {
       :installed-plugin-ids="installedPluginIds"
       :available-plugins="availablePlugins"
       @return-to-menu="emit('return-to-menu')"
+      @return-to-agent="emit('return-to-agent')"
       @select="(id) => emit('select', id)"
       @filter-subject="(s) => emit('filter-subject', s)"
       @filter-tag="(t) => emit('filter-tag', t)"
@@ -329,7 +367,35 @@ function onWheel(e: WheelEvent) {
       />
 
       <div ref="mainArea" class="flex-1 flex flex-col min-h-0 canvas-host" @wheel="onWheel">
-        <div v-if="mode === 'edit' && activeEntry" class="flex-1 flex flex-row min-h-0">
+        <p
+          v-if="searchLoading || searchError"
+          class="px-4 py-2 text-xs text-gray-500 dark:text-brand-mid"
+          role="status"
+          aria-live="polite"
+        >
+          {{ searchLoading ? '正在搜索全部题目…' : searchError }}
+        </p>
+        <div
+          v-if="contentLoading || contentError"
+          data-testid="entry-loading-state"
+          class="flex-1 flex flex-col items-center justify-center gap-3 text-sm text-gray-500 dark:text-brand-mid"
+          role="status"
+          aria-live="polite"
+        >
+          <p>
+            {{
+              contentLoading ? (listLoading ? '正在加载题目列表…' : '正在加载题目…') : contentError
+            }}
+          </p>
+          <button
+            v-if="contentError && !contentLoading"
+            class="rounded-lg bg-accent px-4 py-2 text-white"
+            @click="retryContent"
+          >
+            重试加载
+          </button>
+        </div>
+        <div v-else-if="mode === 'edit' && activeEntry" class="flex-1 flex flex-row min-h-0">
           <NoteEditor
             class="flex-1 min-w-0"
             :entry="activeEntry"
@@ -337,6 +403,9 @@ function onWheel(e: WheelEvent) {
             :group-entries="activeGroupEntries"
             :entries="entries"
             :answers-hidden="answersHidden"
+            :is-dirty="isDirty"
+            :bundle-starting="bundleStarting"
+            :bundle-start-error="bundleStartError"
             :all-subjects="allSubjects"
             :all-tags="allTags"
             :all-sources="allSources"
@@ -346,6 +415,7 @@ function onWheel(e: WheelEvent) {
             @select-sub-question="(id) => emit('select', id)"
             @open-entry="(id) => emit('select', id)"
             @blur-save="emit('blur-save')"
+            @start-review-bundle="emit('start-review-bundle', $event)"
             @reveal="emit('reveal')"
             @mount-canvas="(el, entryId, field) => emit('mount-canvas', el, entryId, field)"
             @add-tag="(name, global) => emit('add-tag', name, global)"
@@ -358,6 +428,10 @@ function onWheel(e: WheelEvent) {
           :entry="currentCard!"
           :group="reviewGroup"
           :answered="answered"
+          :submitting="reviewSaving"
+          :grading-attempt="gradingAttempt"
+          :grading-error="gradingError"
+          :grading-locked="gradingLocked"
           :elapsed-ms="elapsedMs"
           :progress="progress"
           :progress-percent="progressPercent"
@@ -371,6 +445,10 @@ function onWheel(e: WheelEvent) {
           :entries="entries"
           @reveal="emit('reveal')"
           @rate="(r, note, outcome) => emit('rate-card', r, note, outcome)"
+          @outcome-change="emit('review-outcome', $event)"
+          @explain="emit('explain-review', $event)"
+          @next-review="emit('next-graded-card')"
+          @retry-grading="emit('retry-grading')"
           @start-review="(force: boolean) => emit('start-review', force)"
           @exit-review="emit('exit-review')"
           @dismiss-summary="emit('dismiss-summary')"
@@ -658,7 +736,12 @@ function onWheel(e: WheelEvent) {
     />
 
     <Transition name="stats">
-      <StatsPanel v-if="statsOpen" :stats="stats" @close="emit('toggle-stats')" />
+      <StatsPanel
+        v-if="statsOpen"
+        :stats="stats"
+        :load-entries-content="loadEntriesContent"
+        @close="emit('toggle-stats')"
+      />
     </Transition>
   </div>
 </template>

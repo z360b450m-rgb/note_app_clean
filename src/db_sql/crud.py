@@ -1,10 +1,45 @@
 import time
 import uuid
+import json
 from typing import Any, Dict, Iterable, List, Optional
 
-from sqlalchemy.orm import Session
+from fastapi import HTTPException
+from sqlalchemy import or_, func, case
+from sqlalchemy.orm import Session, load_only, selectinload
 
 from src.db_sql.models import NotebookModel, NoteEntryModel, QuestionGroupModel, ReviewLogModel, TagModel
+
+
+def owned_notebook(db: Session, notebook_id: str, user_id: str) -> NotebookModel:
+    notebook = db.query(NotebookModel).filter(
+        NotebookModel.id == notebook_id, NotebookModel.user_id == user_id
+    ).first()
+    if not notebook:
+        raise HTTPException(status_code=404, detail="笔记本未找到")
+    return notebook
+
+
+def owned_entry(db: Session, entry_id: str, user_id: str) -> NoteEntryModel:
+    entry = db.query(NoteEntryModel).filter(
+        NoteEntryModel.id == entry_id, NoteEntryModel.user_id == user_id
+    ).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="错题未找到")
+    return entry
+
+
+def owned_group(db: Session, group_id: str, user_id: str) -> QuestionGroupModel:
+    group = db.query(QuestionGroupModel).join(NotebookModel).filter(
+        QuestionGroupModel.id == group_id, NotebookModel.user_id == user_id
+    ).first()
+    if not group:
+        raise HTTPException(status_code=404, detail="题组未找到")
+    return group
+
+
+def check_group(db: Session, group_id: Optional[str], notebook_id: str, user_id: str) -> None:
+    if group_id and owned_group(db, group_id, user_id).notebook_id != notebook_id:
+        raise HTTPException(status_code=400, detail="题组必须属于同一个笔记本")
 
 
 def normalize_tags(tags: Optional[Iterable[str]]) -> List[str]:
@@ -53,6 +88,7 @@ def get_or_create_tags(db: Session, tags: Optional[Iterable[str]]) -> List[TagMo
 def serialize_notebook(notebook: NotebookModel) -> dict:
     return {
         "id": notebook.id,
+        "user_id": notebook.user_id,
         "name": notebook.name,
         "description": notebook.description or "",
         "instructions": notebook.instructions or "",
@@ -63,8 +99,13 @@ def serialize_notebook(notebook: NotebookModel) -> dict:
 
 
 def serialize_entry(entry: NoteEntryModel) -> dict:
+    now = int(time.time() * 1000)
+    logs = [log for log in entry.review_logs if log.timestamp <= now]
+    review_count = max(entry.review_count or 0, len(logs))
+    wrong_count = sum(log.is_correct is False for log in logs)
     return {
         "id": entry.id,
+        "user_id": entry.user_id,
         "notebook_id": entry.notebook_id,
         "title": entry.title,
         "question": entry.question or "",
@@ -80,7 +121,9 @@ def serialize_entry(entry: NoteEntryModel) -> dict:
         "sort_order": entry.sort_order,
         "created_at": entry.created_at,
         "updated_at": entry.updated_at,
-        "review_count": entry.review_count,
+        "review_count": review_count,
+        "wrong_count": wrong_count,
+        "learning_tags": [f"复习{review_count}次", f"答错{wrong_count}次"],
         "consecutive_passes": entry.consecutive_passes,
         "mastery_level": entry.mastery_level,
         "ease_factor": entry.ease_factor,
@@ -102,7 +145,71 @@ def serialize_question_group(group: QuestionGroupModel) -> dict:
     }
 
 
+ENTRY_METADATA = (
+    'id', 'user_id', 'notebook_id', 'title', 'subject', 'source', 'folder',
+    'group_id', 'sub_question_order', 'sort_order', 'created_at', 'updated_at',
+    'review_count', 'consecutive_passes', 'mastery_level', 'ease_factor', 'interval',
+    'last_review_date', 'next_review_date',
+)
+
+
+def get_entry_summaries(db: Session, notebook_id: str, *, user_id: str, q: str = '') -> dict:
+    owned_notebook(db, notebook_id, user_id)
+    # Content columns are excluded from SELECT; even image-heavy notebooks return small rows.
+    query = db.query(NoteEntryModel).options(
+        load_only(*(getattr(NoteEntryModel, name) for name in ENTRY_METADATA)),
+        selectinload(NoteEntryModel.tags),
+    ).filter(NoteEntryModel.notebook_id == notebook_id, NoteEntryModel.user_id == user_id)
+    if q:
+        group_matches = db.query(QuestionGroupModel.id).filter(
+            QuestionGroupModel.notebook_id == notebook_id,
+            QuestionGroupModel.material.contains(q, autoescape=True),
+        )
+        query = query.filter(or_(
+            *(getattr(NoteEntryModel, field).contains(q, autoescape=True)
+              for field in ('title', 'question', 'wrong_answer', 'correct_answer', 'subject', 'source')),
+            NoteEntryModel.tags.any(TagModel.name.contains(q, autoescape=True)),
+            NoteEntryModel.group_id.in_(group_matches),
+        ))
+    # A bounded substring supplies title fallbacks without transferring full HTML/images.
+    rows = query.add_columns(func.substr(NoteEntryModel.question, 1, 240)).order_by(
+        NoteEntryModel.sort_order, NoteEntryModel.id).all()
+    counts = {entry_id: (total, wrong) for entry_id, total, wrong in db.query(
+        ReviewLogModel.entry_id, func.count(ReviewLogModel.id),
+        func.sum(case((ReviewLogModel.is_correct.is_(False), 1), else_=0)),
+    ).join(NoteEntryModel).filter(
+        NoteEntryModel.user_id == user_id, NoteEntryModel.notebook_id == notebook_id,
+        ReviewLogModel.timestamp <= int(time.time() * 1000),
+    ).group_by(ReviewLogModel.entry_id).all()}
+    return {'items': [dict(
+        {name: getattr(entry, name) for name in ENTRY_METADATA},
+        review_count=max(entry.review_count or 0, counts.get(entry.id, (0, 0))[0]),
+        wrong_count=counts.get(entry.id, (0, 0))[1],
+        tags=[tag.name for tag in entry.tags], question_preview=preview or '',
+    ) for entry, preview in rows]}
+
+
+def get_group_summaries(db: Session, notebook_id: str, *, user_id: str) -> dict:
+    owned_notebook(db, notebook_id, user_id)
+    fields = ('id', 'notebook_id', 'title', 'created_at', 'updated_at')
+    groups = db.query(QuestionGroupModel).options(
+        load_only(*(getattr(QuestionGroupModel, name) for name in fields))
+    ).filter(QuestionGroupModel.notebook_id == notebook_id).all()
+    return {'items': [{name: getattr(group, name) for name in fields} for group in groups]}
+
+
 def serialize_review_log(log: ReviewLogModel) -> Dict[str, Any]:
+    note = log.review_note or ''
+    # 保留数据库结构化审核依据，页面批注只返回可阅读的理由和点评。
+    if note.startswith('{'):
+        try:
+            grading = json.loads(note)
+            if isinstance(grading, dict) and grading.get('source') == 'agent_grading':
+                note = '\n\n'.join(part for part in (
+                    '解题理由：' + grading['explanation_text'] if grading.get('explanation_text') else '',
+                    '智能判卷：\n' + grading.get('comment', '')) if part)
+        except (ValueError, TypeError):
+            pass
     return {
         "id": log.id,
         "entry_id": log.entry_id,
@@ -113,7 +220,8 @@ def serialize_review_log(log: ReviewLogModel) -> Dict[str, Any]:
         "is_correct": log.is_correct,
         "session_id": log.session_id or "",
         "elapsed_ms": log.elapsed_ms or 0,
-        "review_note": log.review_note or "",
+        "review_note": note,
+        "answer_text": log.answer_text or "",
     }
 
 
@@ -123,10 +231,13 @@ def create_notebook(
     description: str = "",
     instructions: str = "",
     notebook_id: Optional[str] = None,
+    *, user_id: str,
 ) -> dict:
     if notebook_id:
         existing = db.query(NotebookModel).filter(NotebookModel.id == notebook_id).first()
         if existing:
+            if existing.user_id != user_id:
+                raise HTTPException(status_code=409, detail="该 ID 不可用")
             existing.name = name
             existing.description = description
             existing.instructions = instructions
@@ -137,6 +248,7 @@ def create_notebook(
 
     notebook = NotebookModel(
         id=notebook_id or str(uuid.uuid4()),
+        user_id=user_id,
         name=name,
         description=description,
         instructions=instructions,
@@ -147,23 +259,23 @@ def create_notebook(
     return serialize_notebook(notebook)
 
 
-def get_all_notebooks(db: Session) -> dict:
-    notebooks = db.query(NotebookModel).order_by(NotebookModel.sort_order.asc()).all()
+def get_all_notebooks(db: Session, *, user_id: str) -> dict:
+    notebooks = db.query(NotebookModel).filter(NotebookModel.user_id == user_id).order_by(NotebookModel.sort_order.asc()).all()
     return {"items": [serialize_notebook(item) for item in notebooks]}
 
 
-def get_notebook_by_id(db: Session, notebook_id: str) -> Optional[dict]:
-    notebook = db.query(NotebookModel).filter(NotebookModel.id == notebook_id).first()
+def get_notebook_by_id(db: Session, notebook_id: str, *, user_id: str) -> Optional[dict]:
+    notebook = owned_notebook(db, notebook_id, user_id)
     return serialize_notebook(notebook) if notebook else None
 
 
-def update_notebook(db: Session, notebook_id: str, update_fields: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    notebook = db.query(NotebookModel).filter(NotebookModel.id == notebook_id).first()
+def update_notebook(db: Session, notebook_id: str, update_fields: Dict[str, Any], *, user_id: str) -> Optional[Dict[str, Any]]:
+    notebook = owned_notebook(db, notebook_id, user_id)
     if not notebook:
         return None
 
     for key, value in update_fields.items():
-        if hasattr(notebook, key):
+        if key in {"name", "description", "instructions", "sort_order"}:
             setattr(notebook, key, value)
 
     notebook.updated_at = int(time.time() * 1000)
@@ -172,8 +284,8 @@ def update_notebook(db: Session, notebook_id: str, update_fields: Dict[str, Any]
     return serialize_notebook(notebook)
 
 
-def delete_notebook(db: Session, notebook_id: str) -> bool:
-    notebook = db.query(NotebookModel).filter(NotebookModel.id == notebook_id).first()
+def delete_notebook(db: Session, notebook_id: str, *, user_id: str) -> bool:
+    notebook = owned_notebook(db, notebook_id, user_id)
     if notebook:
         db.delete(notebook)
         db.commit()
@@ -197,12 +309,17 @@ def create_entry(
     group_id: Optional[str] = None,
     sub_question_order: Optional[int] = None,
     entry_id: Optional[str] = None,
+    review_count: Optional[int] = None,
+    *, user_id: str,
 ) -> dict:
-    linked_tags = get_or_create_tags(db, tags)
+    owned_notebook(db, notebook_id, user_id)
+    check_group(db, group_id, notebook_id, user_id)
 
     if entry_id:
         existing = db.query(NoteEntryModel).filter(NoteEntryModel.id == entry_id).first()
         if existing:
+            if existing.user_id != user_id:
+                raise HTTPException(status_code=409, detail="该 ID 不可用")
             existing.notebook_id = notebook_id
             existing.title = title
             existing.question = question
@@ -210,12 +327,14 @@ def create_entry(
             existing.wrong_answer = wrong_answer
             existing.subject = subject
             existing.source = source
-            existing.tags = linked_tags
+            existing.tags = get_or_create_tags(db, tags)
             existing.drawings = drawings
             existing.sort_order = sort_order
             existing.folder = folder
             existing.group_id = group_id
             existing.sub_question_order = sub_question_order
+            if review_count is not None:
+                existing.review_count = review_count
             existing.updated_at = int(time.time() * 1000)
             db.commit()
             db.refresh(existing)
@@ -223,6 +342,7 @@ def create_entry(
 
     entry = NoteEntryModel(
         id=entry_id or f"cuoti_{int(time.time())}_{uuid.uuid4().hex[:6]}",
+        user_id=user_id,
         notebook_id=notebook_id,
         title=title,
         question=question,
@@ -230,12 +350,13 @@ def create_entry(
         wrong_answer=wrong_answer,
         subject=subject,
         source=source,
-        tags=linked_tags,
+        tags=get_or_create_tags(db, tags),
         drawings=drawings,
         sort_order=sort_order,
         folder=folder,
         group_id=group_id,
         sub_question_order=sub_question_order,
+        review_count=review_count or 0,
     )
     db.add(entry)
     db.commit()
@@ -243,16 +364,21 @@ def create_entry(
     return serialize_entry(entry)
 
 
-def update_entry(db: Session, entry_id: str, update_fields: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    entry = db.query(NoteEntryModel).filter(NoteEntryModel.id == entry_id).first()
+def update_entry(db: Session, entry_id: str, update_fields: Dict[str, Any], *, user_id: str) -> Optional[Dict[str, Any]]:
+    entry = owned_entry(db, entry_id, user_id)
     if not entry:
         return None
+
+    if "group_id" in update_fields:
+        check_group(db, update_fields["group_id"], entry.notebook_id, user_id)
 
     if "tags" in update_fields:
         entry.tags = get_or_create_tags(db, update_fields.pop("tags"))
 
     for key, value in update_fields.items():
-        if hasattr(entry, key):
+        if key == 'review_count' and value is not None:
+            entry.review_count = value
+        if key in {"title", "question", "correct_answer", "wrong_answer", "subject", "source", "drawings", "sort_order", "folder", "group_id", "sub_question_order", "mastery_level", "next_review_date"}:
             setattr(entry, key, value)
 
     entry.updated_at = int(time.time() * 1000)
@@ -261,8 +387,8 @@ def update_entry(db: Session, entry_id: str, update_fields: Dict[str, Any]) -> O
     return serialize_entry(entry)
 
 
-def delete_entry(db: Session, entry_id: str) -> bool:
-    entry = db.query(NoteEntryModel).filter(NoteEntryModel.id == entry_id).first()
+def delete_entry(db: Session, entry_id: str, *, user_id: str) -> bool:
+    entry = owned_entry(db, entry_id, user_id)
     if entry:
         db.delete(entry)
         db.commit()
@@ -270,7 +396,8 @@ def delete_entry(db: Session, entry_id: str) -> bool:
     return False
 
 
-def get_all_question_groups(db: Session, notebook_id: str) -> dict:
+def get_all_question_groups(db: Session, notebook_id: str, *, user_id: str) -> dict:
+    owned_notebook(db, notebook_id, user_id)
     groups = (
         db.query(QuestionGroupModel)
         .filter(QuestionGroupModel.notebook_id == notebook_id)
@@ -280,8 +407,8 @@ def get_all_question_groups(db: Session, notebook_id: str) -> dict:
     return {"items": [serialize_question_group(group) for group in groups]}
 
 
-def get_question_group(db: Session, group_id: str) -> Optional[dict]:
-    group = db.query(QuestionGroupModel).filter(QuestionGroupModel.id == group_id).first()
+def get_question_group(db: Session, group_id: str, *, user_id: str) -> Optional[dict]:
+    group = owned_group(db, group_id, user_id)
     return serialize_question_group(group) if group else None
 
 
@@ -292,11 +419,15 @@ def create_question_group(
     material: str = "",
     drawings: Optional[Dict[str, Any]] = None,
     group_id: Optional[str] = None,
+    *, user_id: str,
 ) -> dict:
+    owned_notebook(db, notebook_id, user_id)
     if group_id:
         existing = db.query(QuestionGroupModel).filter(QuestionGroupModel.id == group_id).first()
         if existing:
-            existing.notebook_id = notebook_id
+            owned_group(db, existing.id, user_id)
+            if existing.notebook_id != notebook_id:
+                raise HTTPException(status_code=400, detail="已有题组不能移动到其他笔记本")
             existing.title = title
             existing.material = material
             existing.drawings = drawings
@@ -318,12 +449,12 @@ def create_question_group(
     return serialize_question_group(group)
 
 
-def update_question_group(db: Session, group_id: str, update_fields: Dict[str, Any]) -> Optional[dict]:
-    group = db.query(QuestionGroupModel).filter(QuestionGroupModel.id == group_id).first()
+def update_question_group(db: Session, group_id: str, update_fields: Dict[str, Any], *, user_id: str) -> Optional[dict]:
+    group = owned_group(db, group_id, user_id)
     if not group:
         return None
     for key, value in update_fields.items():
-        if hasattr(group, key):
+        if key in {"title", "material", "drawings"}:
             setattr(group, key, value)
     group.updated_at = int(time.time() * 1000)
     db.commit()
@@ -331,10 +462,13 @@ def update_question_group(db: Session, group_id: str, update_fields: Dict[str, A
     return serialize_question_group(group)
 
 
-def delete_question_group(db: Session, group_id: str) -> bool:
-    group = db.query(QuestionGroupModel).filter(QuestionGroupModel.id == group_id).first()
+def delete_question_group(db: Session, group_id: str, *, user_id: str) -> bool:
+    group = owned_group(db, group_id, user_id)
     if not group:
         return False
+    db.query(NoteEntryModel).filter(
+        NoteEntryModel.group_id == group_id, NoteEntryModel.user_id == user_id
+    ).update({"group_id": None, "sub_question_order": None}, synchronize_session=False)
     db.delete(group)
     db.commit()
     return True
@@ -348,8 +482,14 @@ def search_and_filter_entries(
     search_query: Optional[str] = None,
     sort_key: str = "created_at",
     sort_dir: str = "desc",
+    *, user_id: str,
 ) -> Dict[str, Any]:
-    query = db.query(NoteEntryModel).filter(NoteEntryModel.notebook_id == notebook_id)
+    owned_notebook(db, notebook_id, user_id)
+    query = db.query(NoteEntryModel).options(
+        selectinload(NoteEntryModel.tags), selectinload(NoteEntryModel.review_logs),
+    ).filter(
+        NoteEntryModel.notebook_id == notebook_id, NoteEntryModel.user_id == user_id
+    )
 
     if subject and subject != "__all__":
         query = query.filter(NoteEntryModel.subject == subject)
@@ -378,14 +518,18 @@ def add_review_log(
     db: Session,
     entry_id: str,
     quality: str,
-    is_correct: bool = True,
+    is_correct: Optional[bool] = None,
     elapsed_ms: int = 0,
     log_id: Optional[str] = None,
     timestamp: Optional[int] = None,
+    *, user_id: str, answer_text: Optional[str] = None,
 ) -> Dict[str, Any]:
+    owned_entry(db, entry_id, user_id)
     if log_id:
         existing = db.query(ReviewLogModel).filter(ReviewLogModel.id == log_id).first()
         if existing:
+            if existing.entry_id != entry_id:
+                raise HTTPException(status_code=409, detail="该复习记录 ID 不可用")
             return serialize_review_log(existing)
 
     log = ReviewLogModel(
@@ -395,6 +539,7 @@ def add_review_log(
         quality=quality,
         is_correct=is_correct,
         elapsed_ms=elapsed_ms,
+        answer_text=answer_text.strip() if answer_text and answer_text.strip() else None,
     )
     db.add(log)
     db.commit()

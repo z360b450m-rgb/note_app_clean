@@ -1,37 +1,82 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useReviewAgentChats } from '@/composables/useReviewAgentChats'
 import { useKnowledgeLibraries } from '@/composables/useKnowledgeLibraries'
-import KnowledgeLibraryDialog from './KnowledgeLibraryDialog.vue'
+import { renderLearningAnswer } from '@/utils/learningAnswer'
+import { parseAgentEntryLink, type AgentEntryTarget } from '@/utils/agentEntryLinks'
+import AgentChatHistoryItem from './AgentChatHistoryItem.vue'
+import AgentChatActionDialog from './AgentChatActionDialog.vue'
 
-const {
-  libraries,
-  available,
-  error: libraryError,
-  save: saveLibrary,
-  archive: archiveLibrary,
-  importing,
-  importProgress,
-  importResults,
-  importFiles,
-} = useKnowledgeLibraries()
-const libraryMode = ref<'insert' | 'manage' | null>(null)
-const selectedLibraries = ref<string[]>([])
+defineProps<{ entryLinkError?: string }>()
+const emit = defineEmits<{ 'open-entry': [target: AgentEntryTarget] }>()
+
+function openAnswerLink(event: MouseEvent) {
+  if (!(event.target instanceof Element)) return
+  const link = event.target.closest('a')
+  const target = parseAgentEntryLink(link?.getAttribute('href') ?? '')
+  if (!target) return
+  event.preventDefault()
+  emit('open-entry', target)
+}
+
+const { available, libraryMode, selectedLibraries, selectionInitialized } = useKnowledgeLibraries()
 const attachedLibraries = computed(() =>
   available.value.filter((x) => selectedLibraries.value.includes(x.id)),
 )
 
-// Interface prototype: chat history is local and never accesses study data.
-const prompt = ref('')
-const { messages, history, activeId, storageError, append } = useReviewAgentChats()
-selectedLibraries.value =
-  messages.value
-    .filter((m) => m.role === 'user')
-    .at(-1)
-    ?.knowledgeBases?.map((x) => x.id) ?? []
+const {
+  draft: prompt,
+  messages,
+  history,
+  activeId,
+  storageError,
+  sending,
+  deleting,
+  append,
+  retry,
+  renameChat,
+  deleteChat,
+} = useReviewAgentChats()
+const busy = computed(() => sending.value || deleting.value)
+const expandedChatId = ref<string | null>(null)
+const chatAction = ref<{ id: string; title: string; mode: 'rename' | 'delete' } | null>(null)
+const chatActionError = ref('')
+function openChatAction(chat: { id: string; title: string }, mode: 'rename' | 'delete') {
+  if (busy.value) return
+  chatActionError.value = ''
+  chatAction.value = { id: chat.id, title: chat.title, mode }
+}
+async function confirmChatAction(title: string) {
+  const action = chatAction.value
+  if (!action || busy.value) return
+  chatActionError.value = ''
+  if (action.mode === 'rename') {
+    if (!renameChat(action.id, title)) return
+  } else {
+    const wasActive = activeId.value === action.id
+    try {
+      if (!(await deleteChat(action.id))) return
+    } catch (cause) {
+      chatActionError.value = cause instanceof Error ? cause.message : '聊天记录删除失败，请重试'
+      return
+    }
+    if (wasActive) selectChat(null)
+  }
+  chatAction.value = null
+  expandedChatId.value = null
+}
+if (!selectionInitialized.value) {
+  selectedLibraries.value =
+    messages.value
+      .filter((m) => m.role === 'user')
+      .at(-1)
+      ?.knowledgeBases?.map((x) => x.id) ?? []
+  selectionInitialized.value = true
+}
 function selectChat(id: string | null) {
+  if (deleting.value) return
+  expandedChatId.value = null
   activeId.value = id
-  prompt.value = ''
   selectedLibraries.value =
     messages.value
       .filter((m) => m.role === 'user')
@@ -47,6 +92,18 @@ function chatDate(timestamp: number) {
   }).format(timestamp)
 }
 const conversation = ref<HTMLElement | null>(null)
+onMounted(() => {
+  nextTick(() => conversation.value?.scrollTo({ top: conversation.value.scrollHeight }))
+})
+watch(
+  () => messages.value.at(-1)?.text,
+  () => {
+    const log = conversation.value
+    if (log && log.scrollHeight - log.scrollTop - log.clientHeight < 80) {
+      nextTick(() => log.scrollTo({ top: log.scrollHeight }))
+    }
+  },
+)
 const lightAngle = ref(0)
 let glowAnimation: Animation | undefined
 let edgeAnimation: Animation | undefined
@@ -90,12 +147,15 @@ const suggestions = [
 
 async function send() {
   const text = prompt.value.trim()
-  if (!text) return
-  append(
+  if (!text || busy.value) return
+  const response = append(
     text,
     attachedLibraries.value.map((x) => ({ id: x.id, name: x.name })),
   )
   prompt.value = ''
+  await nextTick()
+  conversation.value?.scrollTo({ top: conversation.value.scrollHeight, behavior: 'smooth' })
+  await response
   await nextTick()
   conversation.value?.scrollTo({ top: conversation.value.scrollHeight, behavior: 'smooth' })
 }
@@ -103,56 +163,68 @@ async function send() {
 function choose(text: string) {
   prompt.value = text
 }
+
+function executeChoice(text: string) {
+  if (busy.value) return
+  prompt.value = text
+  void send()
+}
 </script>
 
 <template>
   <section
     aria-label="复习 Agent"
-    class="review-agent mx-auto grid min-h-[calc(100vh-180px)] w-full max-w-5xl gap-8 pb-10 lg:grid-cols-[190px_minmax(0,1fr)] lg:gap-12"
+    class="review-agent flex h-full min-h-0 w-full min-w-0 flex-col gap-4 xl:grid xl:grid-cols-[180px_minmax(0,1fr)] xl:gap-6"
   >
     <aside
       aria-label="聊天记录"
-      class="pt-5 lg:border-r lg:border-black/5 lg:pr-5 dark:lg:border-white/10"
+      class="agent-history min-h-0 min-w-0 xl:flex xl:flex-col xl:border-r xl:border-black/10 xl:pr-4 dark:xl:border-white/15"
     >
       <button
         type="button"
-        class="agent-history-button mb-6 flex w-full items-center gap-2 rounded-xl px-3 py-3 text-sm text-accent"
+        class="agent-history-button mb-2 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-sm xl:w-full"
+        :disabled="deleting"
         @click="selectChat(null)"
       >
         <span aria-hidden="true">＋</span> 新对话
       </button>
-      <div class="mb-3 px-3 text-xs text-brand-mid">聊天记录</div>
-      <p v-if="!history.length" class="px-3 text-xs leading-6 text-brand-mid">
+      <div class="mb-2 hidden px-3 text-xs font-medium text-brand-mid xl:block">聊天记录</div>
+      <p v-if="!history.length" class="hidden px-3 text-xs leading-6 text-brand-mid xl:block">
         发送第一条消息后，对话会保存在这里。
       </p>
-      <div class="flex max-h-36 gap-2 overflow-auto lg:max-h-[60vh] lg:flex-col">
-        <button
+      <div class="agent-history-list flex min-h-0 flex-col gap-2 overflow-auto xl:flex-1">
+        <AgentChatHistoryItem
           v-for="chat in history"
           :key="chat.id"
-          type="button"
-          :aria-current="activeId === chat.id ? 'true' : undefined"
-          class="agent-history-button min-w-[150px] rounded-xl px-3 py-3 text-left lg:min-w-0"
-          @click="selectChat(chat.id)"
-        >
-          <span class="block truncate text-sm">{{ chat.title }}</span>
-          <span class="mt-1 block text-[11px] text-brand-mid"
-            >{{ chatDate(chat.updatedAt) }} ·
-            {{ chat.messages.filter((m) => m.role === 'user').length }} 条消息</span
-          >
-        </button>
+          :title="chat.title"
+          :detail="`${chatDate(chat.updatedAt)} · ${chat.messages.filter((m) => m.role === 'user').length} 条消息`"
+          :active="activeId === chat.id"
+          :expanded="expandedChatId === chat.id"
+          :disabled="deleting"
+          @select="selectChat(chat.id)"
+          @expand="expandedChatId = $event ? chat.id : null"
+          @rename="openChatAction(chat, 'rename')"
+          @delete="openChatAction(chat, 'delete')"
+        />
       </div>
-      <p class="mt-5 px-3 text-[11px] text-brand-mid">记录保存在当前浏览器</p>
+      <p class="mt-4 hidden px-3 text-xs text-brand-mid xl:block">记录保存在当前浏览器</p>
       <button
         type="button"
-        class="agent-history-button mt-6 w-full rounded-xl px-3 py-3 text-left text-sm"
+        class="agent-history-button mt-2 inline-flex items-center gap-2 rounded-xl px-3 py-2 text-left text-sm xl:w-full"
         @click="libraryMode = 'manage'"
       >
         知识库管理 <span class="text-xs text-brand-mid">{{ available.length }}</span>
       </button>
     </aside>
-    <div class="flex min-w-0 flex-col justify-center py-6 lg:py-12">
+    <div
+      class="agent-chat-column flex min-h-0 w-full min-w-0 flex-1 flex-col gap-3"
+      :class="{ 'agent-new-chat': !messages.length }"
+    >
       <p v-if="storageError" role="alert" class="mb-4 text-xs text-red-500">{{ storageError }}</p>
-      <div v-if="!messages.length" class="mb-8 text-center sm:mb-10">
+      <p v-if="entryLinkError" role="alert" class="text-sm text-red-700 dark:text-red-300">
+        {{ entryLinkError }}
+      </p>
+      <div v-if="!messages.length" class="shrink-0 px-4 pb-5 text-center">
         <h2
           class="text-[28px] font-medium tracking-tight text-brand-dark dark:text-brand-light sm:text-[36px]"
         >
@@ -167,41 +239,134 @@ function choose(text: string) {
         role="log"
         aria-label="复习目标对话"
         aria-live="polite"
-        class="mb-8 max-h-[50vh] space-y-6 overflow-y-auto pr-2"
+        class="agent-conversation min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain rounded-2xl border border-black/10 p-3 sm:p-5 dark:border-white/15"
       >
         <div
           v-for="(message, index) in messages"
           :key="index"
-          class="flex"
-          :class="message.role === 'user' ? 'justify-end' : 'justify-start'"
+          class="flex justify-start"
+          :class="message.role === 'user' ? 'pl-4 sm:pl-8' : ''"
         >
           <div
-            class="max-w-[90%] whitespace-pre-wrap break-words text-sm leading-7 text-brand-dark dark:text-brand-light-gray"
-            :class="message.role === 'user' ? 'rounded-2xl bg-accent/10 px-5 py-3' : 'px-1 py-2'"
+            class="agent-message min-w-0 max-w-full break-words rounded-2xl border px-4 py-3 text-sm leading-7 sm:px-5"
+            :class="message.role === 'user' ? 'agent-message-user' : 'agent-message-assistant'"
           >
-            <span
-              v-if="message.role === 'assistant'"
-              class="mb-2 block text-xs font-medium text-accent"
-              >复习助手</span
+            <span class="mb-2 block text-xs font-semibold text-brand-mid">{{
+              message.role === 'assistant' ? '复习助手' : '你'
+            }}</span>
+            <details
+              v-if="message.summaries?.length"
+              :open="message.pending"
+              class="agent-processing mb-3 rounded-lg border px-3 py-2 text-xs leading-6 text-brand-mid"
             >
-            {{ message.text }}
-            <div v-if="message.knowledgeBases?.length" class="mt-2 flex flex-wrap gap-2">
-              <span
-                v-for="library in message.knowledgeBases"
-                :key="library.id"
-                class="rounded-lg border border-accent/20 px-2 py-1 text-[11px] text-accent"
-                >▤ {{ library.name }}</span
+              <summary class="cursor-pointer font-medium">处理说明</summary>
+              <ul class="mt-1 space-y-1">
+                <li v-for="(summary, summaryIndex) in message.summaries" :key="summaryIndex">
+                  {{ summary }}
+                </li>
+              </ul>
+            </details>
+            <span v-if="message.pending && !message.text" role="status" class="text-brand-mid"
+              >正在处理，请稍候……</span
+            >
+            <span v-else-if="message.role === 'user'" class="whitespace-pre-wrap">{{
+              message.text
+            }}</span>
+            <div
+              v-else
+              class="learning-answer whitespace-normal"
+              @click="openAnswerLink"
+              v-html="renderLearningAnswer(message.text, message.pending)"
+            />
+            <p
+              v-if="message.error"
+              role="alert"
+              class="mt-2 text-xs text-red-700 dark:text-red-300"
+            >
+              <span>{{ message.error }}</span
+              ><span v-if="!storageError"> · 已保存回复快照</span>
+            </p>
+            <details
+              v-if="message.previous"
+              class="mt-3 rounded-lg border border-current/10 p-2 text-xs"
+            >
+              <summary class="cursor-pointer text-brand-mid">上次回复快照</summary>
+              <div
+                class="learning-answer mt-2 leading-6"
+                v-html="renderLearningAnswer(message.previous.text)"
+              />
+              <p class="mt-2 text-brand-mid">{{ message.previous.error }}</p>
+            </details>
+            <button
+              v-if="message.failed && index === messages.length - 1"
+              type="button"
+              class="ml-3 text-xs text-accent underline disabled:opacity-40"
+              :disabled="sending"
+              @click="retry"
+            >
+              重试
+            </button>
+            <div
+              v-if="
+                message.role === 'assistant' &&
+                !message.pending &&
+                !message.failed &&
+                message.choices?.length &&
+                index === messages.length - 1
+              "
+              class="mt-4 flex flex-col items-start gap-2 whitespace-normal"
+              aria-label="可执行回答"
+            >
+              <span class="text-xs text-brand-mid">点击回答，或输入序号继续</span>
+              <button
+                v-for="(choice, choiceIndex) in message.choices"
+                :key="choice.id"
+                type="button"
+                class="rounded-xl border border-accent/20 px-3 py-2 text-left text-sm text-accent transition-colors hover:bg-accent/10 disabled:opacity-40"
+                :disabled="sending"
+                @click="executeChoice(choice.text)"
               >
+                {{ choiceIndex + 1 }}. {{ choice.label }}
+              </button>
             </div>
+            <p
+              v-if="message.knowledgeBases?.length"
+              class="mt-3 border-t border-current/10 pt-2 text-xs text-brand-mid"
+            >
+              提问范围：{{ message.knowledgeBases.map((library) => library.name).join('、') }}
+            </p>
           </div>
         </div>
       </div>
 
+      <div
+        v-if="attachedLibraries.length"
+        aria-label="本次提问的参考知识库"
+        class="agent-reference-scope flex max-h-24 shrink-0 flex-wrap items-center gap-2 overflow-y-auto px-1"
+      >
+        <span class="text-xs font-medium text-brand-mid">提问范围</span>
+        <span
+          v-for="library in attachedLibraries"
+          :key="library.id"
+          class="agent-library-chip inline-flex max-w-full items-center gap-2 rounded-lg border px-2 py-1 text-xs"
+        >
+          <span class="min-w-0 truncate">{{ library.name }}</span>
+          <button
+            type="button"
+            :aria-label="`移除知识库 ${library.name}`"
+            :disabled="busy"
+            class="agent-chip-remove shrink-0 rounded px-1"
+            @click="selectedLibraries = selectedLibraries.filter((id) => id !== library.id)"
+          >
+            <span aria-hidden="true">×</span>
+          </button>
+        </span>
+      </div>
       <form
         class="agent-composer rounded-[22px] border border-black/10 bg-[#faf9f5] p-4 shadow-sm transition-colors focus-within:border-accent/40 dark:border-white/10 dark:bg-[#252320] sm:p-5"
         :style="{ '--agent-angle': `${lightAngle}deg` }"
         @click="animateComposer"
-        @submit.prevent="send"
+        @submit.prevent="send()"
       >
         <label for="review-agent-prompt" class="sr-only">你的复习目标</label>
         <textarea
@@ -213,25 +378,25 @@ function choose(text: string) {
           class="w-full resize-none bg-transparent text-[15px] leading-7 text-brand-dark outline-none placeholder:text-brand-mid dark:text-brand-light-gray"
           @keydown.enter.exact.prevent="!$event.isComposing && send()"
         />
-        <div class="mt-3 flex items-center justify-between">
-          <div class="flex flex-wrap items-center gap-2">
+        <div class="mt-3 flex items-center justify-between gap-3">
+          <div class="flex min-w-0 items-center gap-3">
             <button
               type="button"
-              class="agent-suggestion flex items-center gap-1.5 rounded-lg px-2 py-2 text-xs"
+              class="agent-library-trigger agent-suggestion flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-2 text-sm"
+              :disabled="busy"
               @click.stop="libraryMode = 'insert'"
             >
-              ▤ 插入知识库
+              ▤ 选择知识库
             </button>
-            <span class="text-xs text-brand-mid"
-              >复习助手 <span class="mx-1 opacity-40">/</span>
-              <span class="opacity-70">预览</span></span
-            >
+            <span class="hidden text-xs text-brand-mid sm:inline" role="status">{{
+              sending ? '正在回复…' : 'Enter 发送 · Shift+Enter 换行'
+            }}</span>
           </div>
           <button
             type="submit"
-            :disabled="!prompt.trim()"
+            :disabled="busy || !prompt.trim()"
             aria-label="发送复习目标"
-            class="agent-send flex h-9 w-9 items-center justify-center rounded-full bg-accent text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-30 hover:enabled:opacity-80"
+            class="agent-send flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent text-white disabled:cursor-not-allowed"
           >
             <svg
               width="19"
@@ -248,21 +413,9 @@ function choose(text: string) {
             </svg>
           </button>
         </div>
-        <div v-if="attachedLibraries.length" class="mt-3 flex flex-wrap gap-2">
-          <button
-            v-for="library in attachedLibraries"
-            :key="library.id"
-            type="button"
-            :aria-label="`移除知识库 ${library.name}`"
-            class="agent-history-button rounded-lg border border-accent/20 px-2 py-1 text-xs"
-            @click.stop="selectedLibraries = selectedLibraries.filter((id) => id !== library.id)"
-          >
-            ▤ {{ library.name }} <span aria-hidden="true">×</span>
-          </button>
-        </div>
       </form>
 
-      <div v-if="!messages.length" class="mt-5 flex flex-wrap justify-center gap-x-5 gap-y-3">
+      <div v-if="!messages.length" class="flex flex-wrap justify-center gap-x-3 gap-y-1">
         <button
           v-for="suggestion in suggestions"
           :key="suggestion.label"
@@ -274,25 +427,79 @@ function choose(text: string) {
         </button>
       </div>
     </div>
-    <KnowledgeLibraryDialog
-      v-if="libraryMode"
-      :mode="libraryMode"
-      :libraries="libraries"
-      :selected="attachedLibraries.map((x) => x.id)"
-      :error="libraryError"
-      :importing="importing"
-      :import-progress="importProgress"
-      :import-results="importResults"
-      @close="libraryMode = null"
-      @insert="selectedLibraries = $event"
-      @save="saveLibrary"
-      @archive="archiveLibrary"
-      @import="importFiles"
-    />
   </section>
+  <AgentChatActionDialog
+    v-if="chatAction"
+    :mode="chatAction.mode"
+    :title="chatAction.title"
+    :busy="deleting"
+    :error="chatActionError"
+    @close="chatAction = null"
+    @confirm="confirmChatAction"
+  />
 </template>
 
 <style scoped>
+.learning-answer :deep(p) {
+  margin: 0.6em 0;
+}
+.learning-answer :deep(p:first-child) {
+  margin-top: 0;
+}
+.learning-answer :deep(h1),
+.learning-answer :deep(h2),
+.learning-answer :deep(h3),
+.learning-answer :deep(h4) {
+  margin: 1em 0 0.5em;
+  font-size: 1.05em;
+  font-weight: 600;
+}
+.learning-answer :deep(ul),
+.learning-answer :deep(ol) {
+  margin: 0.6em 0;
+  padding-left: 1.5em;
+}
+.learning-answer :deep(ul) {
+  list-style: disc;
+}
+.learning-answer :deep(ol) {
+  list-style: decimal;
+}
+.learning-answer :deep(li) {
+  margin: 0.25em 0;
+}
+.learning-answer :deep(hr) {
+  margin: 1.2em 0;
+  opacity: 0.3;
+}
+.learning-answer :deep(.katex-display),
+.learning-answer :deep(pre) {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.learning-answer :deep(pre) {
+  margin: 0.8em 0;
+  padding: 0.75em;
+  border-radius: 8px;
+  background: rgb(128 128 128 / 8%);
+  white-space: pre;
+}
+.learning-answer :deep(.formula-pending) {
+  opacity: 0.6;
+  font-size: 0.85em;
+}
+.learning-answer :deep(table) {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.learning-answer :deep(th),
+.learning-answer :deep(td) {
+  padding: 0.4em 0.7em;
+  border: 1px solid rgb(128 128 128 / 25%);
+}
 .review-agent .agent-history-button {
   background: transparent !important;
   border: 0 !important;

@@ -6,16 +6,21 @@ const { preferences: editorPreferences } = useEditorPreferences()
 import { ref, computed, watch, onUnmounted, nextTick, inject, type Ref } from 'vue'
 import type { NoteEntry, QuestionGroup } from '@/types'
 import { useReviewLogs } from '@/composables/useReviewLogs'
+import EntryReviewInsightCard from './EntryReviewInsightCard.vue'
+import type { ConfirmedReviewBundle } from '@/services/reviewBundles'
 import CameraCapture from './CameraCapture.vue'
 import ScreenshotPicker from './ScreenshotPicker.vue'
 import ImageCropper from './ImageCropper.vue'
-import ImageFilterModal from './ImageFilterModal.vue'
+import ImageTextModal from './ImageTextModal.vue'
+import { captureEditorRange } from '@/utils/imageTextInsert'
+import { useImageTextInsertion } from '@/composables/useImageTextInsertion'
 import AnswerPanel from './AnswerPanel.vue'
 import TagMultiSelect from './TagMultiSelect.vue'
+import MetadataSelect from './MetadataSelect.vue'
 import RichTextSizeControls from './RichTextSizeControls.vue'
 import QuestionGroupConfirmModal from './QuestionGroupConfirmModal.vue'
 import QuestionLinkModal from './QuestionLinkModal.vue'
-import { saveImage, toDisplayHtml, toStorageHtml } from '@/services/imageStorage'
+import { toDisplayHtml, toStorageHtml } from '@/services/imageStorage'
 import { useRichTextSizing } from '@/composables/useRichTextSizing'
 import { pastePlainText } from '@/utils/plainTextPaste'
 import { decorateInternalLinks } from '@/utils/internalLinks'
@@ -29,6 +34,9 @@ const props = defineProps<{
   groupEntries?: NoteEntry[]
   entries: NoteEntry[]
   answersHidden: boolean
+  isDirty?: boolean
+  bundleStarting?: boolean
+  bundleStartError?: string
   allSubjects?: string[]
   allTags?: string[]
   allSources?: string[]
@@ -44,6 +52,7 @@ const emit = defineEmits<{
   'add-sub-question': []
   'select-sub-question': [id: string]
   'open-entry': [id: string]
+  'start-review-bundle': [bundle: ConfirmedReviewBundle]
 }>()
 
 function onBlur() {
@@ -146,12 +155,12 @@ function openLinkedEntry(id: string) {
 }
 
 // Helpers so template @event handlers stay single-statement (Vue compiler no ASI)
-function onSubjectChange(e: Event) {
-  props.entry.subject = (e.target as HTMLSelectElement).value
+function onSubjectChange(value: string) {
+  props.entry.subject = value
   emit('update')
 }
-function onSourceChange(e: Event) {
-  props.entry.source = (e.target as HTMLSelectElement).value
+function onSourceChange(value: string) {
+  props.entry.source = value
   emit('update')
 }
 function onTagsChange(tags: string[]) {
@@ -205,18 +214,33 @@ const qScreenshotOpen = ref(false)
 const qFileInput = ref<HTMLInputElement | null>(null)
 const imageToolTarget = ref<'question' | 'material'>('question')
 
-// Image pipeline: crop → filter → insert
-const pipelineStage = ref<'none' | 'crop' | 'filter'>('none')
+// Image pipeline: crop → recognize text → insert
+const pipelineStage = ref<'none' | 'crop' | 'text'>('none')
 const pipelineSrc = ref('')
 const pipelineTarget = ref<'question' | 'material'>('question')
+let imageInsertionRange: Range | null = null
+const imageContext = () => `${props.entry.notebookId}/${props.entry.id}/${props.group?.id || ''}`
+const {
+  insert: insertRecognized,
+  inserting: imageInserting,
+  insertionError: imageInsertionError,
+  cancelInsertion,
+} = useImageTextInsertion(imageContext, () => props.entry.notebookId)
+
+function captureImagePosition(target: 'question' | 'material', preserve = false) {
+  const range = captureEditorRange(target === 'material' ? materialBody.value : questionBody.value)
+  if (range || !preserve) imageInsertionRange = range
+}
 
 function openScreenshot(target: 'question' | 'material') {
   imageToolTarget.value = target
+  captureImagePosition(target)
   qScreenshotOpen.value = true
 }
 
 function openCamera(target: 'question' | 'material') {
   imageToolTarget.value = target
+  captureImagePosition(target)
   qCamOpen.value = true
 }
 
@@ -227,82 +251,66 @@ function replacePipelineSource(source = '') {
 
 function startPipeline(src: string | Blob, target: 'question' | 'material' = 'question') {
   pipelineTarget.value = target
+  captureImagePosition(target, true)
   replacePipelineSource(typeof src === 'string' ? src : URL.createObjectURL(src))
   pipelineStage.value = 'crop'
 }
 
-async function doInsertImage(src: string) {
-  const el = pipelineTarget.value === 'material' ? materialBody.value : questionBody.value
-  if (!el) return
-  let displayUrl: string
-  try {
-    displayUrl = (await saveImage(props.entry.notebookId, src)).displayUrl
-  } catch (error) {
-    console.error('Failed to save image', error)
-    return
-  }
-  el.focus()
-
-  const img = document.createElement('img')
-  img.src = displayUrl
-  img.style.maxWidth = '100%'
-  img.style.borderRadius = '6px'
-
-  const sel = window.getSelection()
-  if (sel && sel.rangeCount > 0) {
-    const range = sel.getRangeAt(0)
-    range.deleteContents()
-    range.insertNode(img)
-    range.collapse(false)
-    const br = document.createElement('br')
-    range.insertNode(br)
-    range.setStartAfter(br)
-    range.collapse(true)
-    sel.removeAllRanges()
-    sel.addRange(range)
-  } else {
-    el.appendChild(img)
-    el.appendChild(document.createElement('br'))
-  }
-  if (pipelineTarget.value === 'material') onMaterialInput()
-  else onQuestionInput()
+async function onTextConfirm(text: string, source: string, keepOriginal: boolean) {
+  if (pipelineStage.value !== 'text') return
+  const target = pipelineTarget.value
+  const el = target === 'material' ? materialBody.value : questionBody.value
+  if (
+    await insertRecognized(
+      el,
+      text,
+      keepOriginal ? source : undefined,
+      imageInsertionRange,
+      target === 'material' ? onMaterialInput : onQuestionInput,
+    )
+  )
+    closeImagePipeline()
 }
+
+async function onImageOnly(source: string) {
+  await onTextConfirm('', source, true)
+}
+
+function closeImagePipeline() {
+  cancelInsertion()
+  pipelineStage.value = 'none'
+  replacePipelineSource()
+  imageInsertionRange = null
+}
+
+watch(
+  imageContext,
+  () => {
+    closeImagePipeline()
+    qCamOpen.value = false
+    qScreenshotOpen.value = false
+  },
+  { flush: 'sync' },
+)
 
 // --- Crop stage ---
 function onCropConfirm(croppedSrc: string) {
   replacePipelineSource(croppedSrc)
-  pipelineStage.value = 'filter'
+  pipelineStage.value = 'text'
 }
 
 function onCropSkip() {
-  pipelineStage.value = 'filter'
+  pipelineStage.value = 'text'
 }
 
 function onCropCancel() {
-  pipelineStage.value = 'none'
-  replacePipelineSource()
-}
-
-// --- Filter stage ---
-async function onFilterConfirm(filteredSrc: string, _threshold: number) {
-  pipelineStage.value = 'none'
-  await doInsertImage(filteredSrc)
-  replacePipelineSource()
-}
-
-async function onFilterSkip() {
-  pipelineStage.value = 'none'
-  await doInsertImage(pipelineSrc.value)
-  replacePipelineSource()
-}
-
-function onFilterCancel() {
-  pipelineStage.value = 'none'
-  replacePipelineSource()
+  closeImagePipeline()
 }
 
 function insertQuestionImage(src: string) {
-  startPipeline(src, imageToolTarget.value)
+  pipelineTarget.value = imageToolTarget.value
+  replacePipelineSource(src)
+  pipelineStage.value = 'crop'
 }
 
 function onQuestionDragOver(e: DragEvent) {
@@ -322,10 +330,12 @@ function onQuestionDrop(e: DragEvent) {
 }
 
 function openQuestionFilePicker() {
+  captureImagePosition('question')
   qFileInput.value?.click()
 }
 
 function openMaterialFilePicker() {
+  captureImagePosition('material')
   materialFileInput.value?.click()
 }
 
@@ -371,10 +381,10 @@ function onQuestionCamCapture(dataUrl: string) {
 
 function onQuestionScreenshotCapture(dataUrl: string) {
   qScreenshotOpen.value = false
-  // ScreenshotPicker already has its own crop, go straight to filter
+  // ScreenshotPicker already crops; recognize its final image directly.
   pipelineTarget.value = imageToolTarget.value
   replacePipelineSource(dataUrl)
-  pipelineStage.value = 'filter'
+  pipelineStage.value = 'text'
 }
 
 const drawingEnabled = inject<Ref<boolean>>('drawingEnabled', ref(false))
@@ -709,6 +719,7 @@ const QUALITY_DEFS: Record<number | string, { label: string; color: string }> = 
   forgot: { label: '遗忘', color: '#ef4444' },
   unfamiliar: { label: '不熟练', color: '#f59e0b' },
   mastered: { label: '掌握', color: '#22c55e' },
+  submitted: { label: '已作答', color: '#6a9bcc' },
 }
 
 function qualityInfo(q: number | string) {
@@ -798,62 +809,27 @@ function onQuestionWheel(e: WheelEvent) {
     <div class="editor-metadata-row flex items-center gap-2.5 px-1 flex-wrap">
       <!-- Subject select -->
       <div class="relative w-[130px]">
-        <select
-          class="w-full border border-gray-200 dark:border-[#2e2e2c] bg-gray-50 dark:bg-[#1e1e1c] rounded-lg px-2.5 py-1.5 text-xs outline-none text-gray-800 dark:text-brand-light focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all appearance-none cursor-pointer"
-          :value="entry.subject"
-          @change="onSubjectChange($event)"
+        <MetadataSelect
+          :model-value="entry.subject"
+          :options="allSubjects || []"
+          label="学科"
+          placeholder="-- 选择学科 --"
+          @update:model-value="onSubjectChange"
           @blur="onBlur"
-        >
-          <option value="">-- 选择学科 --</option>
-          <option v-for="s in allSubjects || []" :key="s" :value="s">{{ s }}</option>
-          <option
-            v-if="entry.subject && !(allSubjects || []).includes(entry.subject)"
-            :value="entry.subject"
-            hidden
-          >
-            {{ entry.subject }}
-          </option>
-        </select>
-        <svg
-          class="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none w-3 h-3 text-gray-400 dark:text-gray-500"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"
-        >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
+        />
       </div>
 
       <!-- Source select -->
       <div class="relative w-[130px]">
-        <select
-          class="w-full border border-gray-200 dark:border-[#2e2e2c] bg-gray-50 dark:bg-[#1e1e1c] rounded-lg px-2.5 py-1.5 text-xs outline-none text-gray-800 dark:text-brand-light focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all appearance-none cursor-pointer"
-          :value="entry.source"
-          @change="onSourceChange($event)"
+        <MetadataSelect
+          :model-value="entry.source"
+          :options="allSources || []"
+          label="来源"
+          placeholder="-- 选择来源 --"
+          @update:model-value="onSourceChange"
           @blur="onBlur"
-        >
-          <option value="">-- 选择来源 --</option>
-          <option v-for="s in allSources || []" :key="s" :value="s">{{ s }}</option>
-          <option
-            v-if="entry.source && !(allSources || []).includes(entry.source)"
-            :value="entry.source"
-            hidden
-          >
-            {{ entry.source }}
-          </option>
-        </select>
-        <svg
-          class="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none w-3 h-3 text-gray-400 dark:text-gray-500"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2.5"
-        >
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
+        />
       </div>
-      <!-- <select ...> ... </select> -->
 
       <!-- Tags multi-select (same style as subject/source) -->
       <div class="relative w-[150px]">
@@ -946,12 +922,19 @@ function onQuestionWheel(e: WheelEvent) {
       </div>
     </div>
 
-    <!-- Review history timeline -->
-    <div
-      v-if="entryLogs.length > 0"
-      class="mx-1 border border-gray-100 dark:border-[#2e2e2c] rounded-lg overflow-hidden flex-shrink-0"
+    <EntryReviewInsightCard
+      :entry="entry"
+      :logs="entryLogs"
+      :is-dirty="isDirty"
+      :starting="bundleStarting"
+      :start-error="bundleStartError"
+      @start-review-bundle="emit('start-review-bundle', $event)"
     >
       <button
+        type="button"
+        data-testid="entry-review-history-toggle"
+        title="复习次数按每次提交复习结果累计；答错次数只统计明确标记为错误的作答。掌握程度不计入对错。"
+        :aria-expanded="historyOpen"
         class="w-full flex items-center justify-between px-3 py-1.5 text-[11px] text-gray-400 dark:text-brand-mid hover:bg-gray-50 dark:hover:bg-[#1e1e1c] transition-colors"
         @click="historyOpen = !historyOpen"
       >
@@ -966,7 +949,7 @@ function onQuestionWheel(e: WheelEvent) {
           >
             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
           </svg>
-          复习历史 ({{ entryLogs.length }})
+          {{ historyOpen ? '收起复习记录' : '查看复习记录' }}
         </span>
         <svg
           width="12"
@@ -982,6 +965,12 @@ function onQuestionWheel(e: WheelEvent) {
         </svg>
       </button>
       <div v-if="historyOpen" class="px-3 pb-2.5 overflow-x-auto">
+        <p class="text-[11px] text-gray-400 dark:text-brand-mid mb-2">
+          仅统计复习模式中提交的结果；未标记对错的复习不会计入答错次数。
+        </p>
+        <p v-if="!entryLogs.length" class="text-[11px] text-gray-400 dark:text-brand-mid">
+          当前设备暂无复习明细。
+        </p>
         <div class="flex items-start min-w-max pt-1">
           <template v-for="(log, i) in entryLogs" :key="log.id">
             <div class="flex flex-col items-center gap-0.5 flex-shrink-0" style="min-width: 44px">
@@ -998,6 +987,9 @@ function onQuestionWheel(e: WheelEvent) {
               >
                 {{ qualityInfo(log.quality).label }}
               </span>
+              <span class="text-[9px] text-gray-400 dark:text-brand-mid">
+                {{ log.isCorrect === false ? '答错' : log.isCorrect === true ? '答对' : '未判定' }}
+              </span>
             </div>
             <div
               v-if="i < entryLogs.length - 1"
@@ -1006,7 +998,7 @@ function onQuestionWheel(e: WheelEvent) {
           </template>
         </div>
       </div>
-    </div>
+    </EntryReviewInsightCard>
 
     <!-- Slot-based panel workspace. Layout metadata is independent from entry data. -->
     <div
@@ -1368,18 +1360,23 @@ function onQuestionWheel(e: WheelEvent) {
       ><ImageCropper
         v-if="pipelineStage === 'crop'"
         :image-src="pipelineSrc"
+        confirm-label="下一步：转文字"
         @crop="onCropConfirm"
         @skip="onCropSkip"
         @cancel="onCropCancel"
     /></Transition>
 
     <Transition name="modal"
-      ><ImageFilterModal
-        v-if="pipelineStage === 'filter'"
+      ><ImageTextModal
+        v-if="pipelineStage === 'text'"
         :image-src="pipelineSrc"
-        @confirm="onFilterConfirm"
-        @skip="onFilterSkip"
-        @cancel="onFilterCancel"
+        :notebook-id="entry.notebookId"
+        :keep-original="pipelineTarget === 'material'"
+        :inserting="imageInserting"
+        :insertion-error="imageInsertionError"
+        @confirm="onTextConfirm"
+        @skip="onImageOnly"
+        @cancel="closeImagePipeline"
     /></Transition>
 
     <QuestionGroupConfirmModal

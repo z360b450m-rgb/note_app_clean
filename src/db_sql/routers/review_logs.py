@@ -16,14 +16,16 @@ def add_review_log(
     entry_id: str,
     payload: ReviewLogCreate,
     db: Session = Depends(get_db),
-    _current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ):
     return crud.add_review_log(
         db,
+        user_id=current_user.id,
         entry_id=entry_id,
         log_id=payload.id,
         timestamp=payload.timestamp,
         quality=payload.quality,
-        is_correct=payload.is_correct if payload.is_correct is not None else True,
+        is_correct=payload.is_correct,
         elapsed_ms=payload.elapsed_ms or 0,
+        answer_text=payload.answer_text,
     )

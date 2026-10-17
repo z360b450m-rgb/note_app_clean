@@ -8,6 +8,7 @@ import { notebookPluginService } from '@/plugins/service'
 interface PluginLaunchFeatureOptions {
   activeNotebookId: Ref<string | null>
   entries: Ref<NoteEntry[]>
+  ensureEntry?: (id: string) => Promise<NoteEntry>
   loadEntries: () => Promise<void>
   showToast: (message: string) => void
 }
@@ -67,13 +68,19 @@ export function usePluginLaunchFeature(options: PluginLaunchFeatureOptions) {
     if (!notebookId) return
 
     const now = Date.now()
-    const existing = options.entries.value.find(
+    let existing = options.entries.value.find(
       (entry) =>
         entry.pluginSource?.pluginId === 'english-vocabulary' &&
         entry.pluginSource.archiveId === mistake.archiveId &&
         entry.pluginSource.wordId === mistake.word.id &&
         entry.pluginSource.reviewMode === mistake.mode,
     )
+    if (existing?.isSummary) {
+      existing = options.ensureEntry
+        ? await options.ensureEntry(existing.id)
+        : await entryRepository.get(notebookId, existing.id)
+      if (!existing || existing.isSummary) throw new Error('原词汇错题暂时无法加载')
+    }
     const modeLabel = mistake.mode === 'zh-to-en' ? '中译英' : '英译中'
     const packageTag = `Anki:${mistake.archiveName}`
     const question =

@@ -1,6 +1,7 @@
 """JWT authentication helpers, based on FastAPI's full-stack template flow."""
 
 import os
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -32,7 +33,10 @@ def verify_password(password: str, hashed_password: str) -> bool:
 
 def create_access_token(user_id: str) -> str:
     expires_at = datetime.now(UTC) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    return jwt.encode({"sub": user_id, "exp": expires_at}, SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode(
+        {"sub": user_id, "exp": expires_at, "iat": time.time(), "jti": str(uuid.uuid4())},
+        SECRET_KEY, algorithm=ALGORITHM,
+    )
 
 
 def authenticate_user(db: Session, email: str, password: str) -> UserModel | None:
@@ -73,5 +77,8 @@ def get_current_user(
 
     user = db.query(UserModel).filter(UserModel.id == user_id).first()
     if not user or not user.is_active:
+        raise credentials_error
+    issued_at = payload.get("iat", 0)
+    if not isinstance(issued_at, (int, float)) or issued_at < user.password_changed_at:
         raise credentials_error
     return user

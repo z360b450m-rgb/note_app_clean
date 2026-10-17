@@ -2,8 +2,9 @@
 // @AI-NOTE: 工具栏组件 —— 所有操作通过 emit 事件委托给父组件。
 // 禁止在此直接操作存储或执行保存/删除等业务逻辑。
 import { ref, onMounted, onUnmounted } from 'vue'
+import { vMenuMotion } from '@/utils/menuMotion'
 
-defineProps<{
+const props = defineProps<{
   activeId: string | null
   canGoPrev: boolean
   canGoNext: boolean
@@ -333,11 +334,12 @@ function saveFromMenu() {
         <Transition name="popover">
           <div
             v-if="moreMenuOpen"
-            class="absolute right-0 top-10 z-30 bg-white dark:bg-[#141413] rounded-xl shadow-lg border border-gray-100 dark:border-[#2e2e2c] py-1 min-w-[150px]"
+            class="soft-menu toolbar-more-menu absolute right-0 top-10 z-30 min-w-[150px]"
             @click.stop
           >
             <button
-              class="w-full flex items-center gap-2 px-3 py-2 text-sm text-left"
+              v-menu-motion
+              class="soft-menu-item w-full flex items-center gap-2 px-3 py-2 text-sm text-left"
               :disabled="!isDirty"
               title="保存 (Ctrl+S)"
               @click="saveFromMenu"
@@ -357,6 +359,7 @@ function saveFromMenu() {
             </button>
 
             <button
+              v-menu-motion
               class="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-gray-600 dark:text-brand-light-gray hover:bg-gray-50 dark:hover:bg-[#2a2a28] transition-all duration-200 ease-out active:scale-95"
               @click="moreAction('export-json')"
             >
@@ -376,6 +379,7 @@ function saveFromMenu() {
             </button>
             <button
               class="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-gray-600 dark:text-brand-light-gray hover:bg-gray-50 dark:hover:bg-[#2a2a28] transition-all duration-200 ease-out active:scale-95"
+              v-menu-motion
               @click="moreAction('export-pdf')"
             >
               <svg
@@ -395,6 +399,7 @@ function saveFromMenu() {
             </button>
             <button
               class="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-gray-600 dark:text-brand-light-gray hover:bg-gray-50 dark:hover:bg-[#2a2a28] transition-all duration-200 ease-out active:scale-95"
+              v-menu-motion
               @click="moreAction('import')"
             >
               <svg
@@ -413,6 +418,7 @@ function saveFromMenu() {
             </button>
             <button
               class="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-gray-600 dark:text-brand-light-gray hover:bg-gray-50 dark:hover:bg-[#2a2a28] transition-all duration-200 ease-out active:scale-95"
+              v-menu-motion
               @click="moreAction('import-text')"
             >
               <svg
@@ -432,23 +438,10 @@ function saveFromMenu() {
               导入文本
             </button>
             <button
+              v-menu-motion
               class="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-gray-600 dark:text-brand-light-gray hover:bg-gray-50 dark:hover:bg-[#2a2a28] transition-all duration-200 ease-out active:scale-95"
               @click="moreAction('import-pdf')"
             >
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-                <line x1="12" y1="18" x2="12" y2="12" />
-                <line x1="9" y1="15" x2="12" y2="12" />
-                <line x1="15" y1="15" x2="12" y2="12" />
-              </svg>
               导入 PDF
             </button>
             <div class="border-t border-gray-100 dark:border-[#2e2e2c] my-1" />
@@ -456,6 +449,7 @@ function saveFromMenu() {
               class="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-left text-red-500 hover:bg-red-50 dark:hover:bg-red-900 dark:bg-red-950/50 transition-all duration-200 ease-out active:scale-95"
               :class="{ 'opacity-30 pointer-events-none': !activeId }"
               :disabled="!activeId"
+              v-menu-motion
               @click="moreAction('delete')"
             >
               <svg

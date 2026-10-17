@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import type { KnowledgeLibrary } from '@/composables/useKnowledgeLibraries'
+import { useDialogBackdropClose } from '@/composables/useDialogBackdropClose'
+import NotebookIngestPanel from './NotebookIngestPanel.vue'
+import TaskProgress from './TaskProgress.vue'
+import KnowledgeLibraryEntries from './KnowledgeLibraryEntries.vue'
 
 const props = defineProps<{
   mode: 'insert' | 'manage'
@@ -10,15 +14,25 @@ const props = defineProps<{
   importing: boolean
   importProgress: string
   importResults: { fileName: string; success: boolean; detail: string }[]
+  activeImportId?: string
+  actionIds?: string[]
+  focusLibraryId?: string
+  focusNotebookId?: string
 }>()
 const emit = defineEmits<{
   close: []
   insert: [ids: string[]]
-  save: [input: { id?: string; name: string; description: string; content: string }]
+  save: [input: { id?: string; name: string; description: string }]
   archive: [id: string]
   import: [files: File[]]
+  'cancel-import': [id?: string]
+  delete: [id: string]
+  refresh: []
 }>()
 const dialog = ref<HTMLDialogElement | null>(null)
+const { onBackdropPointerDown, onBackdropPointerCancel, onBackdropClick } = useDialogBackdropClose(
+  () => emit('close'),
+)
 const fileInput = ref<HTMLInputElement | null>(null)
 function pickFiles(event: Event) {
   const input = event.target as HTMLInputElement
@@ -29,8 +43,15 @@ const tab = ref(props.mode)
 const query = ref('')
 const chosen = ref([...props.selected])
 const editing = ref(false)
-const draft = ref({ id: undefined as string | undefined, name: '', description: '', content: '' })
+const draft = ref({ id: undefined as string | undefined, name: '', description: '' })
 const showArchived = ref(false)
+const pendingArchiveId = ref<string | null>(null)
+const pendingDeleteId = ref<string | null>(null)
+const entriesLibraryId = ref('')
+const selectable = (item: KnowledgeLibrary) =>
+  !item.archived && ['empty', 'ready'].includes(item.status)
+const busyAction = (item: KnowledgeLibrary) =>
+  props.actionIds?.includes(item.id) || ['cancelling', 'deleting'].includes(item.status)
 const filtered = computed(() =>
   props.libraries.filter(
     (x) =>
@@ -40,9 +61,29 @@ const filtered = computed(() =>
 )
 onMounted(() => dialog.value?.showModal())
 watch(
+  () => props.focusLibraryId,
+  async (id) => {
+    if (!id || props.mode !== 'manage') return
+    tab.value = 'manage'
+    query.value = ''
+    showArchived.value = true
+    editing.value = false
+    await nextTick()
+    dialog.value
+      ?.querySelector<HTMLElement>(
+        props.focusNotebookId ? '.knowledge-ingest' : `[data-library-id="${CSS.escape(id)}"]`,
+      )
+      ?.scrollIntoView({ block: 'nearest' })
+  },
+  { immediate: true },
+)
+watch(
   () => props.libraries,
   () => {
     if (!props.error) editing.value = false
+    chosen.value = chosen.value.filter((id) =>
+      props.libraries.some((item) => item.id === id && selectable(item)),
+    )
   },
 )
 function toggle(id: string) {
@@ -51,20 +92,24 @@ function toggle(id: string) {
     : [...chosen.value, id]
 }
 function edit(item?: KnowledgeLibrary) {
+  pendingDeleteId.value = null
+  pendingArchiveId.value = null
   draft.value = item
-    ? { id: item.id, name: item.name, description: item.description, content: item.content }
-    : { id: undefined, name: '', description: '', content: '' }
+    ? { id: item.id, name: item.name, description: item.description }
+    : { id: undefined, name: '', description: '' }
   editing.value = true
   nextTick(() => dialog.value?.querySelector<HTMLInputElement>('#knowledge-name')?.focus())
 }
 function insert() {
   emit(
     'insert',
-    chosen.value.filter((id) => props.libraries.some((x) => x.id === id && !x.archived)),
+    chosen.value.filter((id) => props.libraries.some((x) => x.id === id && selectable(x))),
   )
   emit('close')
 }
 function switchTab(mode: 'insert' | 'manage') {
+  pendingDeleteId.value = null
+  pendingArchiveId.value = null
   tab.value = mode
   editing.value = false
 }
@@ -72,20 +117,45 @@ function createLibrary() {
   tab.value = 'manage'
   edit()
 }
+function confirmArchive(item: KnowledgeLibrary) {
+  if (pendingArchiveId.value !== item.id) return
+  pendingArchiveId.value = null
+  emit('archive', item.id)
+}
+function askDelete(item: KnowledgeLibrary) {
+  pendingDeleteId.value = item.id
+  pendingArchiveId.value = null
+}
+function confirmDelete(item: KnowledgeLibrary) {
+  if (pendingDeleteId.value !== item.id || busyAction(item)) return
+  emit('delete', item.id)
+  pendingDeleteId.value = null
+}
+function cancelDialog() {
+  if (pendingDeleteId.value) pendingDeleteId.value = null
+  else if (pendingArchiveId.value) pendingArchiveId.value = null
+  else emit('close')
+}
+watch([query, showArchived], () => {
+  pendingArchiveId.value = null
+  pendingDeleteId.value = null
+})
 </script>
 
 <template>
   <dialog
     ref="dialog"
     aria-labelledby="knowledge-heading"
-    class="knowledge-dialog m-auto w-[min(760px,92vw)] max-h-[85vh] overflow-y-auto rounded-3xl border border-black/10 bg-[#eeece5] p-6 text-brand-dark shadow-xl dark:border-white/10 dark:bg-[#2d2b28] dark:text-brand-light"
-    @cancel.prevent="emit('close')"
-    @click="$event.target === dialog && emit('close')"
+    class="knowledge-dialog m-auto box-border w-[min(760px,calc(100vw-24px))] max-h-[calc(100dvh-32px)] overflow-y-auto overscroll-contain rounded-2xl border border-black/10 bg-[#eeece5] p-4 text-brand-dark shadow-xl sm:p-6 dark:border-white/10 dark:bg-[#2d2b28] dark:text-brand-light"
+    @cancel.prevent="cancelDialog"
+    @pointerdown="onBackdropPointerDown"
+    @pointercancel="onBackdropPointerCancel"
+    @click="onBackdropClick"
   >
     <header class="mb-5 flex items-start justify-between">
       <div>
         <h2 id="knowledge-heading" class="text-xl font-semibold">知识库</h2>
-        <p class="mt-2 text-xs text-brand-mid">整理学习资料，为每次对话选择参考内容。</p>
+        <p class="mt-2 text-sm text-brand-mid">管理学习资料与错题索引，选择对话的参考范围。</p>
       </div>
       <button
         type="button"
@@ -96,7 +166,7 @@ function createLibrary() {
         ✕
       </button>
     </header>
-    <div class="mb-5 flex gap-2">
+    <div class="knowledge-tabs mb-5 flex flex-wrap gap-2">
       <button
         type="button"
         :aria-pressed="tab === 'insert'"
@@ -115,20 +185,29 @@ function createLibrary() {
       </button>
     </div>
     <p v-if="error" role="alert" class="mb-4 text-sm text-red-500">{{ error }}</p>
+    <NotebookIngestPanel
+      v-if="tab === 'manage' && !editing"
+      :libraries="libraries.filter(selectable)"
+      :preferred-knowledge-base-id="focusLibraryId || selected[0]"
+      :preferred-notebook-id="focusNotebookId"
+      @background="emit('close')"
+    />
     <input
       ref="fileInput"
       type="file"
-      accept=".pdf,.md,application/pdf,text/markdown"
+      accept=".md,.pdf,text/markdown,application/pdf"
       multiple
       class="hidden"
-      aria-label="导入 PDF 或 Markdown 文件"
+      aria-label="导入 Markdown 或 PDF 学习资料"
       @change="pickFiles"
     />
-    <div class="mb-5 rounded-xl border border-black/10 p-3 dark:border-white/10">
+    <div class="knowledge-import mb-5 rounded-xl border border-black/10 p-4 dark:border-white/10">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p class="text-sm">导入学习资料</p>
-          <p class="mt-1 text-[11px] text-brand-mid">PDF / Markdown · 每个文件创建一个知识库</p>
+          <p class="text-sm font-semibold">导入学习资料</p>
+          <p class="mt-1 text-xs leading-6 text-brand-mid">
+            Markdown / PDF · 每个文件创建一个服务端知识库，入库完成后可检索
+          </p>
         </div>
         <button
           type="button"
@@ -140,6 +219,28 @@ function createLibrary() {
         </button>
       </div>
       <p v-if="importing" role="status" class="mt-3 text-xs text-accent">{{ importProgress }}</p>
+      <template v-if="importing">
+        <TaskProgress label="学习资料入库进度" />
+        <p class="mt-2 text-xs text-brand-mid">关闭窗口后继续后台入库，完成后会通知你。</p>
+        <button type="button" class="mt-2 text-xs text-accent" @click="emit('close')">
+          后台运行
+        </button>
+      </template>
+      <button
+        v-if="importing && activeImportId"
+        type="button"
+        :disabled="
+          actionIds?.includes(activeImportId) ||
+          libraries.some(
+            (item) =>
+              item.id === activeImportId && ['cancelling', 'deleting'].includes(item.status),
+          )
+        "
+        class="mt-2 rounded-lg px-3 py-1.5 text-xs text-accent"
+        @click="emit('cancel-import', activeImportId)"
+      >
+        取消本次导入
+      </button>
       <ul v-if="importResults.length" aria-live="polite" class="mt-3 space-y-2">
         <li
           v-for="(result, index) in importResults"
@@ -150,7 +251,10 @@ function createLibrary() {
           {{ result.success ? '✓' : '×' }} {{ result.fileName }} · {{ result.detail }}
         </li>
       </ul>
-      <p class="mt-2 text-[11px] text-brand-mid">保存提取的文字；扫描版 PDF 暂不支持 OCR。</p>
+      <p class="mt-2 text-xs leading-6 text-brand-mid">
+        支持 UTF-8 编码的 Markdown（不超过 5 MB）和 PDF（不超过 100 MB、最多 300 页）。PDF
+        需登录后解析。
+      </p>
     </div>
     <form v-if="editing" class="space-y-4" @submit.prevent="emit('save', draft)">
       <label class="block text-xs"
@@ -167,16 +271,8 @@ function createLibrary() {
           v-model="draft.description"
           maxlength="200"
           class="mt-2 block w-full px-3 py-2 text-sm"
-          placeholder="这个知识库包含什么？"
+          placeholder="可留空，导入时自动生成简短简介"
       /></label>
-      <label class="block text-xs"
-        >资料内容<textarea
-          v-model="draft.content"
-          rows="8"
-          class="mt-2 block w-full resize-y px-3 py-3 text-sm leading-6"
-          placeholder="粘贴笔记、知识点或复习材料……"
-        />
-      </label>
       <div class="flex justify-end gap-3">
         <button type="button" class="rounded-xl px-4 py-2 text-sm" @click="editing = false">
           取消</button
@@ -191,7 +287,7 @@ function createLibrary() {
           v-model="query"
           aria-label="搜索知识库"
           placeholder="搜索知识库…"
-          class="min-w-0 flex-1 px-3 py-2 text-sm"
+          class="w-full min-w-0 flex-1 basis-40 px-3 py-2 text-sm"
         />
         <button type="button" class="rounded-xl px-4 py-2 text-sm" @click="createLibrary">
           ＋ 新建知识库
@@ -211,47 +307,161 @@ function createLibrary() {
         <div
           v-for="item in filtered"
           :key="item.id"
-          class="flex items-start gap-3 rounded-2xl border border-black/10 p-4 dark:border-white/10"
+          :data-library-id="item.id"
+          :class="{ 'ring-2 ring-accent/50': item.id === focusLibraryId }"
+          class="knowledge-library-card flex min-w-0 flex-wrap items-start gap-3 rounded-2xl border border-black/10 p-4 dark:border-white/10"
         >
           <input
             v-if="tab === 'insert'"
             type="checkbox"
             :aria-label="`选择 ${item.name}`"
             :checked="chosen.includes(item.id)"
+            :disabled="!selectable(item)"
             class="mt-1"
             @change="toggle(item.id)"
           />
-          <div class="min-w-0 flex-1">
-            <h3 class="break-words text-sm font-medium">
+          <div class="min-w-0 flex-1 basis-40">
+            <h3 class="break-words text-sm font-semibold">
               {{ item.name }}
               <span v-if="item.archived" class="text-xs text-brand-mid">已归档</span>
             </h3>
             <p class="mt-1 text-xs leading-6 text-brand-mid">
               {{ item.description || '暂无简介' }}
             </p>
-            <p class="mt-2 text-[11px] text-brand-mid">
-              {{ item.content.length.toLocaleString() }} 字 ·
-              {{ item.source ? item.source.format.toUpperCase() : '本地资料'
+            <p class="mt-2 text-xs text-brand-mid">
+              {{ (item.charCount || 0).toLocaleString() }} 字 ·
+              {{ item.source ? item.source.format.toUpperCase() : '服务端知识库'
               }}{{ item.source?.pageCount ? ` · ${item.source.pageCount} 页` : '' }}
             </p>
-          </div>
-          <div v-if="tab === 'manage'" class="flex flex-wrap gap-2">
-            <button type="button" class="rounded-lg px-3 py-1.5 text-xs" @click="edit(item)">
-              编辑</button
-            ><button
-              type="button"
-              class="rounded-lg px-3 py-1.5 text-xs"
-              @click="emit('archive', item.id)"
+            <p
+              v-if="['uploading', 'processing', 'cancelling', 'deleting'].includes(item.status)"
+              role="status"
+              class="mt-2 text-xs text-accent"
             >
-              {{ item.archived ? '恢复' : '归档' }}
-            </button>
+              {{ item.stage || '正在处理' }}
+            </p>
+            <p
+              v-else-if="['failed', 'cancel_failed', 'delete_failed'].includes(item.status)"
+              role="alert"
+              class="mt-2 text-xs text-red-500"
+            >
+              {{ item.error }}
+            </p>
+            <p
+              v-else-if="item.status === 'cancelled'"
+              role="status"
+              class="mt-2 text-xs text-brand-mid"
+            >
+              已取消导入
+            </p>
+            <p v-else-if="item.status === 'ready'" class="mt-2 text-xs text-brand-mid">
+              已入库 · {{ item.chunkCount }} 段资料 · {{ item.entityCount }} 个知识实体
+            </p>
+            <TaskProgress
+              v-if="['uploading', 'processing', 'cancelling', 'deleting'].includes(item.status)"
+              :label="`${item.name}入库进度`"
+            />
           </div>
+          <button
+            v-if="
+              ['uploading', 'processing', 'cancel_failed'].includes(item.status) &&
+              item.id !== activeImportId
+            "
+            type="button"
+            :disabled="busyAction(item)"
+            class="rounded-lg px-3 py-1.5 text-xs text-accent"
+            @click="emit('cancel-import', item.id)"
+          >
+            {{ item.status === 'cancel_failed' ? '重试清理' : '取消导入' }}
+          </button>
+          <div v-if="tab === 'manage'" class="flex max-w-full flex-wrap gap-2">
+            <template v-if="pendingDeleteId === item.id">
+              <p role="status" class="w-full text-xs leading-6 text-brand-mid">
+                删除“{{ item.name }}”？资料及检索索引将永久删除，源错题和聊天记录会保留。
+              </p>
+              <button
+                type="button"
+                class="rounded-lg px-3 py-1.5 text-xs"
+                @click="pendingDeleteId = null"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                :disabled="busyAction(item)"
+                class="rounded-lg bg-red-700 px-3 py-1.5 text-xs text-white"
+                @click="confirmDelete(item)"
+              >
+                确认删除
+              </button>
+            </template>
+            <template v-else-if="pendingArchiveId === item.id">
+              <p role="status" class="w-full text-xs leading-6 text-brand-mid">
+                {{ item.archived ? '确定恢复这个知识库？' : '确定归档这个知识库？' }}
+              </p>
+              <button
+                type="button"
+                class="rounded-lg px-3 py-1.5 text-xs"
+                @click="pendingArchiveId = null"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                class="rounded-lg bg-accent px-3 py-1.5 text-xs text-white"
+                @click="confirmArchive(item)"
+              >
+                {{ item.archived ? '确认恢复' : '确认归档' }}
+              </button>
+            </template>
+            <template v-else>
+              <button
+                type="button"
+                :disabled="busyAction(item)"
+                :aria-expanded="entriesLibraryId === item.id"
+                class="rounded-lg px-3 py-1.5 text-xs text-accent"
+                @click="entriesLibraryId = entriesLibraryId === item.id ? '' : item.id"
+              >
+                {{ entriesLibraryId === item.id ? '收起错题' : '查看错题' }}
+              </button>
+              <button
+                type="button"
+                :disabled="busyAction(item)"
+                class="rounded-lg px-3 py-1.5 text-xs"
+                @click="edit(item)"
+              >
+                编辑
+              </button>
+              <button
+                type="button"
+                :disabled="busyAction(item)"
+                class="rounded-lg px-3 py-1.5 text-xs"
+                @click="pendingArchiveId = item.id"
+              >
+                {{ item.archived ? '恢复' : '归档' }}
+              </button>
+              <button
+                type="button"
+                :disabled="busyAction(item)"
+                class="rounded-lg px-3 py-1.5 text-xs text-red-700"
+                @click="askDelete(item)"
+              >
+                {{ item.status === 'delete_failed' ? '重试删除' : '删除' }}
+              </button>
+            </template>
+          </div>
+          <KnowledgeLibraryEntries
+            v-if="tab === 'manage' && entriesLibraryId === item.id"
+            :library-id="item.id"
+            @changed="emit('refresh')"
+          />
         </div>
       </div>
       <footer
-        class="mt-6 flex items-center justify-between gap-3 border-t border-black/5 pt-4 dark:border-white/10"
+        class="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-black/10 pt-4 dark:border-white/15"
       >
-        <span class="text-[11px] text-brand-mid">保存在当前浏览器 · 尚未接入检索</span
+        <span class="text-xs leading-6 text-brand-mid"
+          >资料保存在服务端，入库完成后可用于对话检索</span
         ><button
           v-if="tab === 'insert'"
           type="button"
@@ -259,7 +469,7 @@ function createLibrary() {
           @click="insert"
         >
           确认选择
-          {{ chosen.filter((id) => libraries.some((x) => x.id === id && !x.archived)).length }} 个
+          {{ chosen.filter((id) => libraries.some((x) => x.id === id && selectable(x))).length }} 个
         </button>
       </footer>
     </template>

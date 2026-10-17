@@ -63,14 +63,87 @@ export function useEntries(getNotebookId: () => string) {
   const toastMsg = ref('')
   const showDeleteModal = ref(false)
   const isDirty = ref(false)
+  const listLoading = ref(false)
+  const listError = ref('')
+  const detailLoading = ref(false)
+  const detailError = ref('')
   const { settings } = useReviewSettings()
   const notebookId = computed(getNotebookId)
 
   const notebookEntries = computed(() => dedupeById(entries.value))
 
   const activeEntry = computed<NoteEntry | undefined>(() =>
-    entries.value.find((e) => e.id === activeId.value),
+    entries.value.find((e) => e.id === activeId.value && !e.isSummary),
   )
+
+  const detailRequests = new Map<string, Promise<NoteEntry>>()
+  const groupRequests = new Map<string, Promise<void>>()
+
+  async function ensureGroup(id: string): Promise<void> {
+    const owner = notebookId.value
+    const group = questionGroups.value.find((item) => item.id === id)
+    if (group && !group.isSummary) return
+    const key = `${owner}:${id}`
+    if (groupRequests.has(key)) return groupRequests.get(key)!
+    const request = (async () => {
+      const full = await questionGroupRepository.get(owner, id)
+      if (!full || full.isSummary) throw new Error('题组内容暂时无法加载，请重试')
+      if (notebookId.value !== owner) return
+      const current = questionGroups.value.find((item) => item.id === id)
+      if (current?.isSummary) {
+        Object.assign(current, full)
+        delete current.isSummary
+      } else if (!current) questionGroups.value.push(full)
+    })().finally(() => groupRequests.delete(key))
+    groupRequests.set(key, request)
+    return request
+  }
+
+  async function ensureEntry(id: string): Promise<NoteEntry> {
+    const owner = notebookId.value
+    let entry = entries.value.find((item) => item.id === id)
+    if (!entry) throw new Error('题目已删除或不在当前错题本中')
+    const key = `${owner}:${id}`
+    const existingRequest = detailRequests.get(key)
+    if (existingRequest) return existingRequest
+    const request = (async () => {
+      if (entry.isSummary) {
+        const full = await entryRepository.get(owner, id)
+        if (!full || full.isSummary) throw new Error('题目内容暂时无法加载，请重试')
+        const current = entries.value.find((item) => item.id === id)
+        if (notebookId.value !== owner || !current) throw new Error('已切换错题本')
+        entry = current
+        if (entry.isSummary) {
+          Object.assign(entry, full)
+          delete entry.isSummary
+          delete entry.questionPreview
+        }
+      }
+      if (entry.groupId) await ensureGroup(entry.groupId)
+      return entry
+    })().finally(() => detailRequests.delete(key))
+    detailRequests.set(key, request)
+    return request
+  }
+
+  async function getFullEntries(
+    ids = entries.value.map((entry) => entry.id),
+  ): Promise<NoteEntry[]> {
+    const result: NoteEntry[] = []
+    let next = 0
+    async function worker() {
+      while (next < ids.length) {
+        const index = next++
+        result[index] = await ensureEntry(ids[index])
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(3, ids.length) }, worker))
+    return result
+  }
+
+  async function searchEntryIds(query: string): Promise<string[]> {
+    return entryRepository.searchIds!(notebookId.value, query.trim())
+  }
 
   const activeGroup = computed<QuestionGroup | undefined>(() => {
     const groupId = activeEntry.value?.groupId
@@ -148,6 +221,7 @@ export function useEntries(getNotebookId: () => string) {
         questionGroups.value = questionGroups.value.filter((group) => group.id !== groupId)
         groupListRevision++
       } else {
+        await getFullEntries(remaining.map((entry) => entry.id))
         await Promise.all(
           remaining.map((entry, index) => {
             entry.subQuestionOrder = index
@@ -165,6 +239,7 @@ export function useEntries(getNotebookId: () => string) {
 
   // Batch tag
   async function batchTag(ids: string[], tags: string[]) {
+    await getFullEntries(ids)
     const now = Date.now()
     for (const id of ids) {
       const entry = entries.value.find((e) => e.id === id)
@@ -183,6 +258,7 @@ export function useEntries(getNotebookId: () => string) {
     const now = Date.now()
     const idSet = new Set(ids)
     const targets = entries.value.filter((entry) => idSet.has(entry.id))
+    await getFullEntries(targets.map((entry) => entry.id))
     await Promise.all(
       targets.map((entry) =>
         entryRepository.put(
@@ -219,6 +295,7 @@ export function useEntries(getNotebookId: () => string) {
     const now = Date.now()
     const targets = entries.value.filter((e) => e.subject === oldName)
     if (targets.length === 0) return
+    await getFullEntries(targets.map((entry) => entry.id))
     await Promise.all(
       targets.map((e) =>
         entryRepository.put(e.notebookId, toPlain({ ...e, subject: newName, updatedAt: now })),
@@ -235,6 +312,7 @@ export function useEntries(getNotebookId: () => string) {
     const now = Date.now()
     const targets = entries.value.filter((e) => e.tags && e.tags.includes(oldName))
     if (targets.length === 0) return
+    await getFullEntries(targets.map((entry) => entry.id))
     await Promise.all(
       targets.map((e) => {
         const newTags = e.tags.map((t) => (t === oldName ? newName : t))
@@ -252,6 +330,7 @@ export function useEntries(getNotebookId: () => string) {
     const now = Date.now()
     const targets = entries.value.filter((e) => e.source === oldName)
     if (targets.length === 0) return
+    await getFullEntries(targets.map((entry) => entry.id))
     await Promise.all(
       targets.map((e) =>
         entryRepository.put(e.notebookId, toPlain({ ...e, source: newName, updatedAt: now })),
@@ -268,6 +347,7 @@ export function useEntries(getNotebookId: () => string) {
     const now = Date.now()
     const targets = entries.value.filter((e) => e.subject === name)
     if (targets.length === 0) return
+    await getFullEntries(targets.map((entry) => entry.id))
     await Promise.all(
       targets.map((e) =>
         entryRepository.put(e.notebookId, toPlain({ ...e, subject: '', updatedAt: now })),
@@ -284,6 +364,7 @@ export function useEntries(getNotebookId: () => string) {
     const now = Date.now()
     const targets = entries.value.filter((e) => e.tags && e.tags.includes(name))
     if (targets.length === 0) return
+    await getFullEntries(targets.map((entry) => entry.id))
     await Promise.all(
       targets.map((e) => {
         const newTags = e.tags.filter((t) => t !== name)
@@ -301,6 +382,7 @@ export function useEntries(getNotebookId: () => string) {
     const now = Date.now()
     const targets = entries.value.filter((e) => e.source === name)
     if (targets.length === 0) return
+    await getFullEntries(targets.map((entry) => entry.id))
     await Promise.all(
       targets.map((e) =>
         entryRepository.put(e.notebookId, toPlain({ ...e, source: '', updatedAt: now })),
@@ -313,8 +395,8 @@ export function useEntries(getNotebookId: () => string) {
   }
 
   // Batch export
-  function batchExport(ids: string[]) {
-    const selected = entries.value.filter((e) => ids.includes(e.id))
+  async function batchExport(ids: string[]) {
+    const selected = await getFullEntries(ids)
     const json = JSON.stringify(selected, null, 2)
     const blob = new Blob([json], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
@@ -360,33 +442,70 @@ export function useEntries(getNotebookId: () => string) {
 
   async function loadEntries() {
     const seq = ++loadSeq
+    const owner = notebookId.value
+    listError.value = ''
+    listLoading.value = true
+    if (entries.value.some((entry) => entry.notebookId !== owner)) {
+      entries.value = []
+      questionGroups.value = []
+      activeId.value = null
+      detailLoading.value = false
+      detailError.value = ''
+    }
     if (!notebookId.value) {
       entries.value = []
       questionGroups.value = []
+      listLoading.value = false
       return
     }
     const startedAtEntryRevision = entryListRevision
     const startedAtGroupRevision = groupListRevision
     try {
       const [result, groups] = await Promise.all([
-        entryRepository.getAll(notebookId.value),
-        questionGroupRepository.getAll(notebookId.value),
+        entryRepository.getSummaries!(owner),
+        questionGroupRepository.getSummaries!(owner),
       ])
       if (seq === loadSeq) {
         // Do not let a slower full load overwrite an item that was created or
         // removed while storage was responding. Every local insertion/removal
         // advances the matching revision below.
         if (startedAtEntryRevision === entryListRevision) {
-          entries.value = dedupeById(result)
+          const loaded = new Map(
+            entries.value.filter((entry) => !entry.isSummary).map((entry) => [entry.id, entry]),
+          )
+          entries.value = dedupeById(result).map((summary) => {
+            const full = loaded.get(summary.id)
+            return full &&
+              (full.updatedAt >= summary.updatedAt || (isDirty.value && full.id === activeId.value))
+              ? full
+              : summary
+          })
         }
         if (startedAtGroupRevision === groupListRevision) {
-          questionGroups.value = dedupeById(groups)
+          const loaded = new Map(
+            questionGroups.value
+              .filter((group) => !group.isSummary)
+              .map((group) => [group.id, group]),
+          )
+          questionGroups.value = dedupeById(groups).map((summary) => {
+            const full = loaded.get(summary.id)
+            return full &&
+              (full.updatedAt >= summary.updatedAt ||
+                (isDirty.value && full.id === activeEntry.value?.groupId))
+              ? full
+              : summary
+          })
         }
+        if (activeId.value) await loadEntry(activeId.value)
       }
-    } catch {
+    } catch (error) {
+      if (seq === loadSeq)
+        listError.value = error instanceof Error ? error.message : '题目列表加载失败，请重试'
       if (seq === loadSeq && entries.value.length === 0) {
         entries.value = []
       }
+    } finally {
+      if (seq === loadSeq) listLoading.value = false
     }
   }
 
@@ -401,6 +520,7 @@ export function useEntries(getNotebookId: () => string) {
         if (existing) {
           // Restore snapshot data into existing entry
           Object.assign(existing, snap.data, { updatedAt: snap.data.updatedAt })
+          delete existing.isSummary
           await entryRepository.put(notebookId.value, toPlain(existing))
         } else {
           // Entry was never saved — restore it
@@ -539,8 +659,22 @@ export function useEntries(getNotebookId: () => string) {
     showToast('文档扫描已保存')
   }
 
-  function loadEntry(id: string) {
+  let selectionSequence = 0
+  async function loadEntry(id: string) {
+    const sequence = ++selectionSequence
+    const owner = notebookId.value
     activeId.value = id
+    detailError.value = ''
+    detailLoading.value = true
+    try {
+      await ensureEntry(id)
+    } catch (error) {
+      if (sequence === selectionSequence && owner === notebookId.value) {
+        detailError.value = error instanceof Error ? error.message : '题目加载失败，请重试'
+      }
+    } finally {
+      if (sequence === selectionSequence && owner === notebookId.value) detailLoading.value = false
+    }
   }
 
   // Call this on every content mutation — marks dirty, does NOT save to DB
@@ -557,7 +691,7 @@ export function useEntries(getNotebookId: () => string) {
     const savedEntryId = activeId.value
     if (!savedEntryId) return false
     const entry = entries.value.find((e) => e.id === savedEntryId)
-    if (!entry) return false
+    if (!entry || entry.isSummary || detailLoading.value || detailError.value) return false
     const savedNotebookId = entry.notebookId
     const group = entry.groupId
       ? questionGroups.value.find((item) => item.id === entry.groupId)
@@ -647,6 +781,7 @@ export function useEntries(getNotebookId: () => string) {
       questionGroups.value = questionGroups.value.filter((group) => group.id !== groupId)
       groupListRevision++
     } else if (groupId) {
+      await getFullEntries(remainingSiblings.map((entry) => entry.id))
       await Promise.all(
         remainingSiblings.map((entry, index) => {
           entry.subQuestionOrder = index
@@ -663,6 +798,13 @@ export function useEntries(getNotebookId: () => string) {
   }
 
   async function updateEntryTitle(id: string, newTitle: string) {
+    try {
+      await getFullEntries()
+      await Promise.all(questionGroups.value.map((group) => ensureGroup(group.id)))
+    } catch {
+      showToast('部分题目暂时无法加载，重命名未完成')
+      return
+    }
     const entry = entries.value.find((e) => e.id === id)
     if (!entry || !newTitle) return
     const oldTitle = entry.title
@@ -724,6 +866,12 @@ export function useEntries(getNotebookId: () => string) {
   }
 
   async function reorderEntries(orderedIds: string[]) {
+    try {
+      await getFullEntries(orderedIds)
+    } catch {
+      showToast('部分题目暂时无法加载，排序未保存')
+      return
+    }
     const now = Date.now()
     const updates: Promise<void>[] = []
     entryListRevision++
@@ -755,6 +903,13 @@ export function useEntries(getNotebookId: () => string) {
     showDeleteModal,
     selectedIds,
     selectedCount,
+    listLoading,
+    listError,
+    detailLoading,
+    detailError,
+    ensureEntry,
+    getFullEntries,
+    searchEntryIds,
     loadEntries,
     checkCrashRecovery,
     createEntry,

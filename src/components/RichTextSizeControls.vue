@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { rememberedHighlightColor as rememberedColor } from '../composables/useRichTextSizing'
+import MetadataSelect from './MetadataSelect.vue'
 
 const props = defineProps<{
   imageSelected: boolean
@@ -62,9 +63,8 @@ const emit = defineEmits<{
   link: []
 }>()
 
-function onImageWidthChange(event: Event) {
-  const select = event.target as HTMLSelectElement
-  if (select.value) emit('image-width', select.value)
+function onImageWidthChange(value: string) {
+  if (value) emit('image-width', value)
 }
 </script>
 
@@ -153,7 +153,8 @@ function onImageWidthChange(event: Event) {
         v-if="paletteOpen"
         role="group"
         aria-label="荧光颜色"
-        class="absolute left-0 top-full z-50 mt-2 w-40 rounded-xl border border-gray-200 bg-white p-2 shadow-lg dark:border-[#3a3a37] dark:bg-[#252523]"
+        data-ui-menu
+        class="soft-menu absolute left-0 top-full z-50 mt-2 w-40"
       >
         <button
           v-for="color in colors"
@@ -206,20 +207,23 @@ function onImageWidthChange(event: Event) {
       </svg>
     </button>
 
-    <select
-      aria-label="调整图片大小"
-      :disabled="!imageSelected"
-      :value="imageWidth"
-      :title="imageSelected ? '调整当前图片大小' : '请先点击内容中的图片'"
-      class="h-8 w-[70px] rounded-lg border border-gray-200 bg-white px-2 text-sm text-gray-500 outline-none hover:border-accent/50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-[#3a3a37] dark:bg-[#1a1a18] dark:text-brand-mid"
-      @change="onImageWidthChange"
-    >
-      <option value="auto">原始</option>
-      <option value="25">25%</option>
-      <option value="50">50%</option>
-      <option value="75">75%</option>
-      <option value="100">100%</option>
-    </select>
+    <div class="w-[70px] shrink-0">
+      <MetadataSelect
+        label="调整图片大小"
+        :disabled="!imageSelected"
+        :model-value="imageWidth"
+        :clearable="false"
+        :options="[
+          { value: 'auto', label: '原始' },
+          { value: '25', label: '25%' },
+          { value: '50', label: '50%' },
+          { value: '75', label: '75%' },
+          { value: '100', label: '100%' },
+        ]"
+        :title="imageSelected ? '调整当前图片大小' : '请先点击内容中的图片'"
+        @update:model-value="onImageWidthChange"
+      />
+    </div>
   </div>
 </template>
 

@@ -322,7 +322,7 @@ onUnmounted(() => {
           :class="{ 'text-accent font-semibold': entry.id === activeId }"
           @dblclick.stop="startRename(entry.id)"
         >
-          {{ entry.title || preview(entry.question, 28) || '无题目' }}
+          {{ entry.title || preview(entry.questionPreview || entry.question, 28) || '无题目' }}
         </span>
         <span
           v-if="formatNextReview(entry.nextReviewDate)"

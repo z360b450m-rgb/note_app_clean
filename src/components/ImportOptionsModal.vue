@@ -45,7 +45,8 @@ const { enterModal, leaveModal } = useModalAnimations()
           <div>
             <h3 class="text-[15px] font-bold text-gray-800 dark:text-brand-light">导入归档</h3>
             <p class="text-[13px] text-gray-500 dark:text-brand-mid mt-1 leading-relaxed">
-              请选择导入策略。导入时遇到相同 ID
+              支持 .ctb 和 .zip。完整归档恢复原有错题本、题组和图片，旧版归档导入当前错题本。
+              导入时遇到相同 ID
               的错题将直接覆盖。你可以保留原有的复习进度，或将其重置为全新的未复习错题。
             </p>
           </div>

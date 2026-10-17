@@ -1,13 +1,16 @@
 <script setup lang="ts">
 // @AI-NOTE: 答案面板组件 —— 纯展示 + 编辑。数据通过 props 传入,
 // 变更通过 emit 委托。禁止直接操作存储或实现保存逻辑。
-import { ref, watch, nextTick, computed, inject, type Ref } from 'vue'
+import { ref, watch, nextTick, computed, inject, onUnmounted, type Ref } from 'vue'
+import ImageTextModal from './ImageTextModal.vue'
+import { captureEditorRange } from '@/utils/imageTextInsert'
+import { useImageTextInsertion } from '@/composables/useImageTextInsertion'
 import CameraCapture from './CameraCapture.vue'
 import ScreenshotPicker from './ScreenshotPicker.vue'
 import RichTextSizeControls from './RichTextSizeControls.vue'
 import QuestionLinkModal from './QuestionLinkModal.vue'
 import type { NoteEntry } from '@/types'
-import { saveImage, toDisplayHtml, toStorageHtml } from '@/services/imageStorage'
+import { toDisplayHtml, toStorageHtml } from '@/services/imageStorage'
 import { useRichTextSizing } from '@/composables/useRichTextSizing'
 import { pastePlainText } from '@/utils/plainTextPaste'
 import { decorateInternalLinks } from '@/utils/internalLinks'
@@ -92,9 +95,7 @@ function openLinkedEntry(id: string) {
 
 const isWrong = props.type === 'wrong'
 const label = isWrong ? '错误答案' : '正确答案'
-const dotClass = isWrong
-  ? 'bg-[#b85c4b] dark:bg-[#df9a8c]'
-  : 'bg-[#63816b] dark:bg-[#a0b8a5]'
+const dotClass = isWrong ? 'bg-[#b85c4b] dark:bg-[#df9a8c]' : 'bg-[#63816b] dark:bg-[#a0b8a5]'
 
 const panelBg = isWrong
   ? 'bg-red-50 border-red-100 dark:bg-red-500/10 dark:border-red-500/20'
@@ -114,7 +115,6 @@ const hiddenColor = isWrong
 let suppressInput = false
 
 const showHidden = computed(() => props.hidden)
-
 
 function syncContent() {
   nextTick(() => {
@@ -180,42 +180,55 @@ function onInput() {
   }
 }
 
-async function insertImageAtCursor(source: Blob | string) {
-  const el = bodyRef.value
-  if (!el) return
-  let displayUrl: string
-  try {
-    displayUrl = (await saveImage(props.notebookId, source)).displayUrl
-  } catch (error) {
-    console.error('Failed to save image', error)
-    return
-  }
-  el.focus()
-
-  const img = document.createElement('img')
-  img.src = displayUrl
-  img.style.maxWidth = '100%'
-  img.style.borderRadius = '6px'
-
-  const sel = window.getSelection()
-  if (sel && sel.rangeCount > 0) {
-    const range = sel.getRangeAt(0)
-    range.deleteContents()
-    range.insertNode(img)
-    range.collapse(false)
-    const br = document.createElement('br')
-    range.insertNode(br)
-    range.setStartAfter(br)
-    range.collapse(true)
-    sel.removeAllRanges()
-    sel.addRange(range)
-  } else {
-    el.appendChild(img)
-    const br = document.createElement('br')
-    el.appendChild(br)
-  }
-  onInput()
+const imageTextSrc = ref('')
+let imageInsertionRange: Range | null = null
+const {
+  insert: insertRecognized,
+  inserting: imageInserting,
+  insertionError: imageInsertionError,
+  cancelInsertion,
+} = useImageTextInsertion(
+  () => `${props.notebookId}/${props.entryId}/${props.hidden}`,
+  () => props.notebookId,
+)
+function closeImageText() {
+  cancelInsertion()
+  if (imageTextSrc.value.startsWith('blob:')) URL.revokeObjectURL(imageTextSrc.value)
+  imageTextSrc.value = ''
+  imageInsertionRange = null
 }
+function insertImageAtCursor(source: Blob | string) {
+  const position = captureEditorRange(bodyRef.value) || imageInsertionRange
+  closeImageText()
+  imageInsertionRange = position
+  imageTextSrc.value = source instanceof Blob ? URL.createObjectURL(source) : source
+}
+async function onTextConfirm(text: string, source: string, keepOriginal: boolean) {
+  if (!imageTextSrc.value) return
+  if (
+    await insertRecognized(
+      bodyRef.value,
+      text,
+      keepOriginal ? source : undefined,
+      imageInsertionRange,
+      onInput,
+    )
+  )
+    closeImageText()
+}
+async function onImageOnly(source: string) {
+  await onTextConfirm('', source, true)
+}
+watch(
+  () => [props.notebookId, props.entryId, props.hidden],
+  () => {
+    closeImageText()
+    camOpen.value = false
+    screenshotOpen.value = false
+  },
+  { flush: 'sync' },
+)
+onUnmounted(closeImageText)
 
 function onPaste(e: ClipboardEvent) {
   const items = e.clipboardData?.items
@@ -260,7 +273,14 @@ function onBodyWheel(e: WheelEvent) {
 }
 
 function openFilePicker() {
+  imageInsertionRange = captureEditorRange(bodyRef.value)
   fileInput.value?.click()
+}
+
+function openCapture(kind: 'camera' | 'screenshot') {
+  imageInsertionRange = captureEditorRange(bodyRef.value)
+  if (kind === 'camera') camOpen.value = true
+  else screenshotOpen.value = true
 }
 
 function onFileChange() {
@@ -303,7 +323,15 @@ function onScreenshotCapture(dataUrl: string) {
         :title="showHidden ? `显示${label}` : `隐藏${label}`"
         @click.stop="emit('reveal')"
       >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          aria-hidden="true"
+        >
           <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
           <circle cx="12" cy="12" r="3" />
           <path v-if="!showHidden" d="M2 2l20 20" />
@@ -328,7 +356,7 @@ function onScreenshotCapture(dataUrl: string) {
           <button
             class="w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/5 transition-all active:scale-90"
             title="截屏"
-            @click="screenshotOpen = true"
+            @click="openCapture('screenshot')"
           >
             <svg
               width="13"
@@ -346,7 +374,7 @@ function onScreenshotCapture(dataUrl: string) {
           <button
             class="w-6 h-6 rounded-md flex items-center justify-center text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/5 transition-all active:scale-90"
             title="拍照"
-            @click="camOpen = true"
+            @click="openCapture('camera')"
           >
             <svg
               width="13"
@@ -421,8 +449,6 @@ function onScreenshotCapture(dataUrl: string) {
     >
       <span class="text-sm font-medium">{{ label }}已隐藏</span>
     </div>
-
-
   </div>
 
   <Teleport v-if="formattingActive && !showHidden" defer to="#rich-text-formatting-toolbar">
@@ -441,12 +467,25 @@ function onScreenshotCapture(dataUrl: string) {
     />
   </Teleport>
 
-  <Transition name="modal"><CameraCapture v-if="camOpen" @capture="onCameraCapture" @close="camOpen = false" /></Transition>
+  <Transition name="modal"
+    ><CameraCapture v-if="camOpen" @capture="onCameraCapture" @close="camOpen = false"
+  /></Transition>
 
   <ScreenshotPicker
     v-if="screenshotOpen"
     @capture="onScreenshotCapture"
     @close="screenshotOpen = false"
+  />
+
+  <ImageTextModal
+    v-if="imageTextSrc"
+    :image-src="imageTextSrc"
+    :notebook-id="notebookId"
+    :inserting="imageInserting"
+    :insertion-error="imageInsertionError"
+    @confirm="onTextConfirm"
+    @skip="onImageOnly"
+    @cancel="closeImageText"
   />
 
   <QuestionLinkModal

@@ -3,9 +3,13 @@
 // 通过 emit 发送, 不在此存储或操作业务数据。
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 
-defineProps<{
-  imageSrc: string
-}>()
+withDefaults(
+  defineProps<{
+    imageSrc: string
+    confirmLabel?: string
+  }>(),
+  { confirmLabel: '裁剪并插入' },
+)
 
 const emit = defineEmits<{
   crop: [dataUrl: string]
@@ -300,7 +304,7 @@ onUnmounted(() => {
         class="px-5 py-1.5 text-xs font-semibold text-white bg-accent hover:bg-accent/90 transition-colors rounded-lg active:scale-95"
         @click="doCrop"
       >
-        裁剪并插入
+        {{ confirmLabel }}
       </button>
     </div>
 

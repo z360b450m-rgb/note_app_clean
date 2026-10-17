@@ -22,10 +22,11 @@ def search_entries(
     sort_key: str = "created_at",
     sort_dir: str = "desc",
     db: Session = Depends(get_db),
-    _current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ):
     return crud.search_and_filter_entries(
         db,
+        user_id=current_user.id,
         notebook_id=notebook_id,
         subject=subject,
         tag=tag,
@@ -35,14 +36,30 @@ def search_entries(
     )
 
 
+@router.get('/summaries')
+def entry_summaries(notebook_id: str, q: str = '', db: Session = Depends(get_db),
+                    current_user: UserModel = Depends(get_current_user)):
+    return crud.get_entry_summaries(db, notebook_id, user_id=current_user.id, q=q)
+
+
+@router.get('/{entry_id}')
+def get_entry(entry_id: str, notebook_id: str, db: Session = Depends(get_db),
+              current_user: UserModel = Depends(get_current_user)):
+    entry = crud.owned_entry(db, entry_id, current_user.id)
+    if entry.notebook_id != notebook_id:
+        raise HTTPException(status_code=404, detail='错题未找到')
+    return crud.serialize_entry(entry)
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_entry(
     payload: EntryCreate,
     db: Session = Depends(get_db),
-    _current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ):
     return crud.create_entry(
         db,
+        user_id=current_user.id,
         entry_id=payload.id,
         notebook_id=payload.notebook_id,
         title=payload.title,
@@ -57,6 +74,7 @@ def create_entry(
         folder=payload.folder,
         group_id=payload.group_id,
         sub_question_order=payload.sub_question_order,
+        review_count=payload.review_count,
     )
 
 
@@ -65,12 +83,12 @@ def update_entry(
     entry_id: str,
     payload: EntryUpdate,
     db: Session = Depends(get_db),
-    _current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ):
     update_data = payload.model_dump(exclude_unset=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="没有提供需要更新的字段")
-    updated_entry = crud.update_entry(db, entry_id, update_data)
+    updated_entry = crud.update_entry(db, entry_id, update_data, user_id=current_user.id)
     if not updated_entry:
         raise HTTPException(status_code=404, detail="错题未找到")
     return updated_entry
@@ -80,8 +98,8 @@ def update_entry(
 def delete_entry(
     entry_id: str,
     db: Session = Depends(get_db),
-    _current_user: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ):
-    if not crud.delete_entry(db, entry_id):
+    if not crud.delete_entry(db, entry_id, user_id=current_user.id):
         raise HTTPException(status_code=404, detail="错题未找到")
     return {"message": "错题已成功删除", "id": entry_id}

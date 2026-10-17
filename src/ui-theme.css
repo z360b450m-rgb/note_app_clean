@@ -2262,6 +2262,224 @@ body {
     background-position: 25% 50%;
   }
 }
+
+/* Shared warm floating menus. Reka portals stay inside #app for the same skin. */
+#app .soft-menu {
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--neo-line) 45%, transparent);
+  border-radius: 18px;
+  background: var(--neo-surface);
+  color: var(--neo-ink);
+  box-shadow: var(--neo-raised);
+  -webkit-app-region: no-drag;
+}
+#app :is(.ui-menu-item, .soft-menu-item, .toolbar-more-menu > button) {
+  display: flex;
+  align-items: center;
+  position: relative;
+  min-height: 38px;
+  padding: 9px 12px;
+  margin: 2px 0;
+  border: 0 !important;
+  border-radius: 12px;
+  outline: none;
+  background-color: transparent !important;
+  color: var(--neo-muted) !important;
+  box-shadow: none !important;
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 400;
+  cursor: pointer;
+  transition:
+    background-color 180ms ease,
+    color 180ms ease !important;
+}
+#app :is(.ui-menu-item, .soft-menu-item, .toolbar-more-menu > button)::after {
+  content: none !important;
+}
+#app
+  :is(.ui-menu-item, .soft-menu-item, .toolbar-more-menu > button):is(
+    [data-state='checked'],
+    [aria-pressed='true'],
+    [aria-current='true']
+  ) {
+  background-color: color-mix(in srgb, var(--neo-selected) 65%, var(--neo-surface)) !important;
+  color: var(--neo-accent) !important;
+}
+#app
+  :is(.ui-menu-item, .soft-menu-item, .toolbar-more-menu > button):is(
+    [data-highlighted],
+    :focus-visible
+  ):not(:disabled) {
+  background-color: var(--neo-selected) !important;
+  color: var(--neo-accent) !important;
+}
+@media (hover: hover) and (pointer: fine) {
+  #app :is(.ui-menu-item, .soft-menu-item, .toolbar-more-menu > button):hover:not(:disabled) {
+    background-color: var(--neo-selected) !important;
+    color: var(--neo-accent) !important;
+  }
+}
+#app .tag-select {
+  width: 100%;
+}
+#app .batch-actions-menu {
+  min-width: 180px;
+}
+#app .filter-item-menu .ui-menu-item {
+  min-height: 30px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+#app button.metadata-select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--neo-line) !important;
+  border-radius: 12px;
+  background-color: var(--neo-surface) !important;
+  color: var(--neo-ink) !important;
+  box-shadow: var(--neo-inset) !important;
+  font-size: 13px;
+  text-align: left;
+}
+#app .metadata-select-trigger > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#app .metadata-select-chevron {
+  flex-shrink: 0;
+  color: var(--neo-muted);
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+#app .metadata-select-trigger[data-state='open'] .metadata-select-chevron {
+  transform: rotate(180deg);
+}
+#app .metadata-select-menu {
+  z-index: 10000;
+  min-width: max(180px, var(--reka-select-trigger-width));
+  max-width: min(320px, calc(100vw - 24px));
+  max-height: min(320px, var(--reka-select-content-available-height));
+  overflow: hidden;
+  transform-origin: var(--reka-select-content-transform-origin);
+}
+#app .soft-menu[data-state='open'] {
+  animation: soft-menu-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+#app .soft-menu[data-state='closed'] {
+  animation: soft-menu-out 120ms ease-in;
+}
+#app .metadata-select-menu [data-reka-select-viewport] {
+  max-height: inherit;
+  overflow-y: auto;
+}
+#app .metadata-select-check {
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--neo-accent);
+}
+#app .metadata-select-empty {
+  font-size: 12px;
+  border-bottom: 1px solid var(--neo-line) !important;
+  border-radius: 10px 10px 0 0;
+  margin-bottom: 4px;
+}
+#app .tag-select-menu .soft-menu-item > span:last-child {
+  color: inherit;
+}
+#app .tag-select-menu {
+  z-index: 10000;
+  max-width: calc(100vw - 24px);
+  max-height: var(--reka-popover-content-available-height);
+  transform-origin: var(--reka-popover-content-transform-origin);
+}
+#app .toolbar-more-menu > button.text-red-500:hover:not(:disabled) {
+  color: #c44747 !important;
+}
+@keyframes soft-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes soft-menu-out {
+  to {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.98);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #app :is(.soft-menu, .soft-menu-item, .metadata-select-chevron) {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* The tag's close circle melts into its capsule while only the cross rotates. */
+#app .tag-select-chip {
+  overflow: hidden;
+  padding-right: 2px;
+  background-color: var(--neo-selected);
+  color: var(--neo-accent);
+}
+#app .tag-select-chip .tag-select-chip-remove {
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: 0 !important;
+  border-radius: 999px !important;
+  background-color: var(--neo-surface) !important;
+  color: inherit !important;
+  box-shadow: var(--neo-small) !important;
+  transform: none !important;
+  transition:
+    background-color 280ms ease,
+    box-shadow 280ms ease;
+}
+#app .tag-select-chip .tag-select-chip-remove::after {
+  content: none !important;
+}
+#app .tag-select-chip .tag-select-chip-remove:focus-visible {
+  outline-offset: -3px;
+}
+#app .tag-select-chip-close {
+  transform: rotate(0deg);
+  transform-origin: center;
+  transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+#app .tag-select-chip .tag-select-chip-remove:is(:focus-visible, :active, .ui-pressing) {
+  background-color: var(--neo-selected) !important;
+  box-shadow: none !important;
+}
+#app .tag-select-chip-remove:focus-visible .tag-select-chip-close {
+  transform: rotate(180deg);
+}
+@media (hover: hover) and (pointer: fine) {
+  #app .tag-select-chip .tag-select-chip-remove:hover {
+    background-color: var(--neo-selected) !important;
+    box-shadow: none !important;
+  }
+  #app .tag-select-chip-remove:hover .tag-select-chip-close {
+    transform: rotate(180deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #app .tag-select-chip-close {
+    transform: none !important;
+    transition: none !important;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   #app :is(input, textarea):focus,
   #app .workspace-search:focus-within {

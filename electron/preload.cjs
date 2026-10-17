@@ -44,8 +44,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   confirmClose: () => ipcRenderer.invoke('app:confirmClose'),
 
+  setStorageUser: (token) => ipcRenderer.invoke('storage:setUser', token),
+
   // Storage API — notebookId required for per-notebook sharding
   getAll: (notebookId) => ipcRenderer.invoke('storage:getAll', notebookId),
+  getEntrySummaries: (notebookId) => ipcRenderer.invoke('storage:getEntrySummaries', notebookId),
+  searchEntryIds: (notebookId, query) =>
+    ipcRenderer.invoke('storage:searchEntryIds', notebookId, query),
+  getQuestionGroupSummaries: (notebookId) =>
+    ipcRenderer.invoke('storage:getQuestionGroupSummaries', notebookId),
   get: (notebookId, id) => ipcRenderer.invoke('storage:get', notebookId, id),
   put: (entry) => ipcRenderer.invoke('storage:put', entry),
   delete: (notebookId, id) => ipcRenderer.invoke('storage:delete', notebookId, id),
@@ -93,6 +100,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Notebook API
   getAllNotebooks: () => ipcRenderer.invoke('storage:getAllNotebooks'),
+  getNotebookOverview: (notebookIds, includeLocalState) =>
+    ipcRenderer.invoke('storage:getNotebookOverview', notebookIds, includeLocalState),
   putNotebook: (notebook) => ipcRenderer.invoke('storage:putNotebook', notebook),
   deleteNotebook: (id) => ipcRenderer.invoke('storage:deleteNotebook', id),
 

@@ -5,6 +5,9 @@ import { reactive, ref, watch } from 'vue'
 import { useEditorPreferences } from '@/composables/useEditorPreferences'
 import { useNotebooks } from '@/composables/useNotebooks'
 import { useReviewSettings } from '@/composables/useReviewSettings'
+import MetadataSelect from './MetadataSelect.vue'
+import WebsiteLinks from './WebsiteLinks.vue'
+import AccountPasswordForm from './AccountPasswordForm.vue'
 
 defineProps<{
   isDark: boolean
@@ -146,25 +149,36 @@ function save() {
                 <span class="ui-switch-thumb absolute top-0.5 left-0.5 w-4 h-4 rounded-full" />
               </button>
             </div>
-            <label class="preference-row"
-              >正文大小<select v-model.number="preferences.fontSize">
-                <option
-                  v-for="size in [12, 16, 18, 20, 24, 28, 32, 36, 48]"
-                  :key="size"
-                  :value="size"
-                >
-                  {{ size }} px
-                </option>
-              </select></label
-            >
-            <label class="preference-row"
-              >默认笔记本<select v-model="preferences.defaultNotebookId">
-                <option value="">恢复上次打开的笔记本</option>
-                <option v-for="notebook in notebooks" :key="notebook.id" :value="notebook.id">
-                  {{ notebook.name }}
-                </option>
-              </select></label
-            >
+            <div class="preference-row">
+              <span>正文大小</span>
+              <div class="w-28">
+                <MetadataSelect
+                  v-model="preferences.fontSize"
+                  label="正文大小"
+                  :options="
+                    [12, 16, 18, 20, 24, 28, 32, 36, 48].map((size) => ({
+                      value: size,
+                      label: `${size} px`,
+                    }))
+                  "
+                  :clearable="false"
+                />
+              </div>
+            </div>
+            <div class="preference-row">
+              <span>默认笔记本</span>
+              <div class="min-w-0 max-w-[200px] flex-1">
+                <MetadataSelect
+                  v-model="preferences.defaultNotebookId"
+                  label="默认笔记本"
+                  :options="[
+                    { value: '', label: '恢复上次打开的笔记本' },
+                    ...notebooks.map((notebook) => ({ value: notebook.id, label: notebook.name })),
+                  ]"
+                  :clearable="false"
+                />
+              </div>
+            </div>
             <p class="mt-3 text-xs text-brand-mid">
               设置即时保存，默认笔记本在下次进入应用时生效。
             </p>
@@ -366,6 +380,7 @@ function save() {
             <div class="truncate text-[11px] text-gray-400 dark:text-brand-mid mb-3">
               {{ userEmail }}
             </div>
+            <AccountPasswordForm @changed="emit('logout')" />
             <button
               class="w-full rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[13px] font-medium text-red-600 transition-colors hover:bg-red-100 dark:border-red-900/60 dark:bg-red-950/20 dark:text-red-300 dark:hover:bg-red-950/40"
               @click="emit('logout')"
@@ -375,6 +390,19 @@ function save() {
           </div>
         </div>
         <div class="settings-column settings-shortcuts-column">
+          <section
+            v-if="!isElectron"
+            class="mb-5 border-t border-gray-100 pt-4 dark:border-[#2e2e2c]"
+            aria-labelledby="settings-help-heading"
+          >
+            <h3
+              id="settings-help-heading"
+              class="mb-3 text-[13px] font-medium text-gray-700 dark:text-brand-light-gray"
+            >
+              帮助与关于
+            </h3>
+            <WebsiteLinks />
+          </section>
           <div class="pt-4 border-t border-gray-100 dark:border-[#2e2e2c]">
             <button
               class="w-full flex items-center justify-between text-[13px] font-medium text-gray-700 dark:text-brand-light-gray hover:text-accent transition-colors"

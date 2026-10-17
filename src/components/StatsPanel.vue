@@ -3,10 +3,12 @@
 // 禁止在此直接计算统计指标或操作存储。
 import { computed, ref } from 'vue'
 import type { ReviewHistorySession, StatsState } from '@/composables/useStats'
+import type { NoteEntry } from '@/types'
 import ReviewHistoryDetailModal from './ReviewHistoryDetailModal.vue'
 
 const props = defineProps<{
   stats: StatsState
+  loadEntriesContent?: (ids: string[]) => Promise<NoteEntry[]>
 }>()
 
 const emit = defineEmits<{
@@ -14,14 +16,28 @@ const emit = defineEmits<{
 }>()
 
 const overviewMetrics = computed(() => [
-  { label: '总错题数', value: props.stats.totalCount.value, path: 'm12 3 9 5-9 5-9-5 9-5M3 12l9 5 9-5M3 16l9 5 9-5' },
-  { label: '待复习', value: props.stats.dueCount.value, path: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 7v5l3 2' },
-  { label: '今日已复习', value: props.stats.reviewedToday.value, path: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18m-4 9 3 3 5-6' },
+  {
+    label: '总错题数',
+    value: props.stats.totalCount.value,
+    path: 'm12 3 9 5-9 5-9-5 9-5M3 12l9 5 9-5M3 16l9 5 9-5',
+  },
+  {
+    label: '待复习',
+    value: props.stats.dueCount.value,
+    path: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18M12 7v5l3 2',
+  },
+  {
+    label: '今日已复习',
+    value: props.stats.reviewedToday.value,
+    path: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18m-4 9 3 3 5-6',
+  },
   { label: '累计复习', value: props.stats.totalReviews.value, path: 'M3 10a9 9 0 1 1 2 8M3 4v6h6' },
 ])
 
 const historyScope = ref<'due' | 'all'>('due')
-const masteredBucket = computed(() => props.stats.masteryBuckets.value.find((bucket) => bucket.label === '已掌握'))
+const masteredBucket = computed(() =>
+  props.stats.masteryBuckets.value.find((bucket) => bucket.label === '已掌握'),
+)
 const selectedSession = ref<ReviewHistorySession | null>(null)
 const selectedSessionScope = ref<'due' | 'all'>('due')
 const activeHistory = computed(() =>
@@ -30,9 +46,38 @@ const activeHistory = computed(() =>
     : props.stats.freeReviewHistory.value,
 )
 
-function openSession(session: ReviewHistorySession) {
-  selectedSession.value = session
-  selectedSessionScope.value = historyScope.value
+const historyLoading = ref(false)
+const historyError = ref('')
+let historySequence = 0
+async function openSession(session: ReviewHistorySession) {
+  const sequence = ++historySequence
+  const scope = historyScope.value
+  historyLoading.value = true
+  historyError.value = ''
+  try {
+    const details = await props.loadEntriesContent?.(session.entries.map((entry) => entry.entryId))
+    if (sequence !== historySequence) return
+    const byId = new Map(details?.map((entry) => [entry.id, entry]))
+    selectedSession.value = {
+      ...session,
+      entries: session.entries.map((row) => {
+        const full = byId.get(row.entryId)
+        return full
+          ? {
+              ...row,
+              question: full.question,
+              wrongAnswer: full.wrongAnswer,
+              correctAnswer: full.correctAnswer,
+            }
+          : row
+      }),
+    }
+    selectedSessionScope.value = scope
+  } catch {
+    if (sequence === historySequence) historyError.value = '复习详情暂时无法加载，请重试'
+  } finally {
+    if (sequence === historySequence) historyLoading.value = false
+  }
 }
 
 function formatSessionTime(timestamp: number): string {
@@ -107,7 +152,18 @@ function formatDuration(ms: number): string {
         <div class="stats-overview">
           <div v-for="metric in overviewMetrics" :key="metric.label" class="stats-metric">
             <span class="stats-metric-icon" aria-hidden="true">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path :d="metric.path" /></svg>
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path :d="metric.path" />
+              </svg>
             </span>
             <span>{{ metric.label }}</span>
             <strong class="tabular-nums">{{ metric.value }}</strong>
@@ -138,7 +194,9 @@ function formatDuration(ms: number): string {
               >
                 {{ item.name }}
               </span>
-              <div class="stats-track flex-1 h-1.5 bg-gray-100 dark:bg-[#1e1e1c] rounded-md overflow-hidden">
+              <div
+                class="stats-track flex-1 h-1.5 bg-gray-100 dark:bg-[#1e1e1c] rounded-md overflow-hidden"
+              >
                 <div
                   class="h-full rounded-md transition-all duration-500"
                   :style="{
@@ -162,13 +220,19 @@ function formatDuration(ms: number): string {
           >
             近7天复习
           </h3>
-          <div class="stats-week flex items-end justify-between gap-1.5 px-1" :class="{ 'stats-week-empty': stats.weeklyActivity.value.every((day) => day.count === 0) }">
+          <div
+            class="stats-week flex items-end justify-between gap-1.5 px-1"
+            :class="{
+              'stats-week-empty': stats.weeklyActivity.value.every((day) => day.count === 0),
+            }"
+          >
             <div
               v-for="(day, i) in stats.weeklyActivity.value"
               :key="i"
               class="flex-1 flex flex-col items-center gap-1.5"
             >
-              <span class="stats-day-count">{{ day.count }}</span><div class="stats-day-bar w-full flex items-end justify-center h-16">
+              <span class="stats-day-count">{{ day.count }}</span>
+              <div class="stats-day-bar w-full flex items-end justify-center h-16">
                 <div
                   class="w-full max-w-[28px] rounded-t-md transition-all duration-500"
                   :class="day.count > 0 ? 'bg-accent' : 'bg-gray-150'"
@@ -191,11 +255,18 @@ function formatDuration(ms: number): string {
             掌握程度
           </h3>
           <div v-if="stats.totalCount.value > 0" class="stats-mastery-summary">
-            <div class="stats-mastery-ring" :style="{ background: `conic-gradient(var(--neo-accent) ${(masteredBucket?.pct ?? 0) * 3.6}deg, var(--neo-line) 0deg)` }">
+            <div
+              class="stats-mastery-ring"
+              :style="{
+                background: `conic-gradient(var(--neo-accent) ${(masteredBucket?.pct ?? 0) * 3.6}deg, var(--neo-line) 0deg)`,
+              }"
+            >
               <span>{{ masteredBucket?.pct ?? 0 }}%</span>
             </div>
             <div>
-              <div class="text-sm">已掌握 {{ masteredBucket?.count ?? 0 }} / {{ stats.totalCount.value }} 题</div>
+              <div class="text-sm">
+                已掌握 {{ masteredBucket?.count ?? 0 }} / {{ stats.totalCount.value }} 题
+              </div>
               <div class="text-xs text-gray-500 dark:text-brand-mid">复习进度</div>
             </div>
           </div>
@@ -216,7 +287,9 @@ function formatDuration(ms: number): string {
               >
                 {{ bucket.label }}
               </span>
-              <div class="stats-track flex-1 h-1.5 bg-gray-100 dark:bg-[#1e1e1c] rounded-full overflow-hidden">
+              <div
+                class="stats-track flex-1 h-1.5 bg-gray-100 dark:bg-[#1e1e1c] rounded-full overflow-hidden"
+              >
                 <div
                   class="h-full rounded-full transition-all duration-500"
                   :style="{ width: bucket.pct + '%', backgroundColor: bucket.color }"
@@ -298,6 +371,13 @@ function formatDuration(ms: number): string {
         </div>
       </div>
     </div>
+    <p
+      v-if="historyLoading || historyError"
+      class="text-center text-sm text-gray-500"
+      role="status"
+    >
+      {{ historyLoading ? '正在加载复习详情…' : historyError }}
+    </p>
     <ReviewHistoryDetailModal
       v-if="selectedSession"
       :session="selectedSession"

@@ -30,7 +30,7 @@ const emit = defineEmits<{
   moveSelected: [folder?: string]
 }>()
 
-const expanded = ref<Set<string>>(new Set(['__none__', ...props.folders]))
+const expanded = ref<Set<string>>(new Set(['__none__']))
 const editingFolder = ref<string | null>(null)
 const editName = ref('')
 const deletingFolder = ref<string | null>(null)
@@ -38,9 +38,9 @@ const deletingFolder = ref<string | null>(null)
 watch(
   () => props.folders,
   (folders) => {
-    const next = new Set(expanded.value)
-    folders.forEach((folder) => next.add(folder))
-    expanded.value = next
+    // Refreshing/importing entries must preserve the user's folder choices.
+    const available = new Set(['__none__', ...folders])
+    expanded.value = new Set([...expanded.value].filter((folder) => available.has(folder)))
   },
 )
 
@@ -95,6 +95,7 @@ function requestDelete(folder: string) {
         <button
           class="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left"
           :title="folder"
+          :aria-expanded="expanded.has(folder)"
           @click="toggleFolder(folder)"
         >
           <svg
@@ -219,6 +220,7 @@ function requestDelete(folder: string) {
       >
         <button
           class="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left"
+          :aria-expanded="expanded.has('__none__')"
           @click="toggleFolder(null)"
         >
           <svg

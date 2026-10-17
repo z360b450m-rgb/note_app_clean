@@ -19,6 +19,7 @@
     "dev:all:no-open": "node scripts/dev-services.cjs start --no-open",
     "dev:status": "node scripts/dev-services.cjs status",
     "dev:stop": "node scripts/dev-services.cjs stop",
+    "dev:restart-backend": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restart-backend.ps1",
     "build": "vite build",
     "postinstall": "patch-package",
     "build:win:release": "node scripts/build-windows-release.cjs dir",
@@ -58,7 +59,7 @@
           ]
         }
       ],
-      "icon": "public/icon-512.png"
+      "icon": "public/renote-r-tile-512.png"
     },
     "nsis": {
       "oneClick": false,
@@ -72,7 +73,7 @@
     },
     "mac": {
       "target": "dmg",
-      "icon": "public/icon-512.png",
+      "icon": "public/renote-r-tile-512.png",
       "category": "public.app-category.education"
     },
     "linux": {
@@ -80,12 +81,14 @@
         "AppImage",
         "deb"
       ],
-      "icon": "public/icon-512.png",
+      "icon": "public/renote-r-tile-512.png",
       "category": "Education"
     }
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/katex": "^0.16.8",
+    "@types/markdown-it": "^14.2.0",
     "@vitejs/plugin-vue": "^5.0.0",
     "autoprefixer": "^10.4.20",
     "electron": "^42.4.0",
@@ -112,7 +115,10 @@
     "electron-log": "^5.4.4",
     "gsap": "^3.15.0",
     "jszip": "^3.10.1",
-    "pdfjs-dist": "^6.0.227",
+    "katex": "^0.19.0",
+    "markdown-it": "^15.0.2",
+    "motion": "^14.1.0",
+    "reka-ui": "^2.11.0",
     "sql.js": "^1.14.1",
     "vue": "^3.5.0"
   },

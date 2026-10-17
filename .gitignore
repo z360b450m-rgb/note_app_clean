@@ -80,3 +80,6 @@ assets/
 /.chart-data-*/
 /.docx-approval/
 /design-examples-preview.png
+/risk-models/
+/.data/pdf-imports/
+/.data/knowledge-documents/

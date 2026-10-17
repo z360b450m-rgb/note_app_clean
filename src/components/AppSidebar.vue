@@ -51,6 +51,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   select: [id: string]
   'return-to-menu': []
+  'return-to-agent': []
   filterSubject: [subject: string]
   filterTag: [tag: string]
   filterSource: [source: string | null]
@@ -504,6 +505,27 @@ function cancelAddSource() {
             </svg>
           </button>
         </div>
+        <div v-if="notebookName" class="mb-3 flex items-center">
+          <button
+            type="button"
+            class="flex items-center gap-2 rounded-lg px-3 py-1.5 text-[13px] font-medium hover:bg-accent/10 transition-colors"
+            title="返回 AI 助手"
+            @click="emit('return-to-agent')"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              aria-hidden="true"
+            >
+              <path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z" />
+            </svg>
+            返回 AI 助手
+          </button>
+        </div>
       </div>
 
       <Transition :css="false" @enter="enterFilterPanel" @leave="leaveFilterPanel" @enter-cancelled="clearFilterPanel" @leave-cancelled="clearFilterPanel">
@@ -849,7 +871,8 @@ function cancelAddSource() {
               <!-- Batch dropdown menu -->
               <Transition name="popover"><div
                 v-if="batchMenuOpen"
-                class="absolute left-0 top-6 z-30 bg-white dark:bg-[#141413] rounded-xl shadow-lg border border-gray-100 dark:border-[#2e2e2c] py-1 min-w-[150px]"
+                data-ui-menu
+                class="soft-menu batch-actions-menu absolute left-0 top-6 z-30 min-w-[150px]"
                 @click.stop
               >
                 <!-- Tag input inline -->
@@ -1014,7 +1037,8 @@ function cancelAddSource() {
             <!-- Dropdown -->
             <Transition name="popover"><div
               v-if="sortOpen"
-              class="sort-navigation-menu absolute right-0 top-6 z-30 bg-white dark:bg-[#141413] rounded-xl shadow-lg border border-gray-100 dark:border-[#2e2e2c] py-1 min-w-[140px]"
+              data-ui-menu
+              class="soft-menu sort-navigation-menu absolute right-0 top-6 z-30 min-w-[140px]"
               @click.stop
             >
               <button

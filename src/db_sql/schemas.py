@@ -1,5 +1,5 @@
-from typing import List, Optional
-from pydantic import BaseModel, Field
+from typing import List, Literal, Optional
+from pydantic import BaseModel, Field, field_validator
 # ===========================================================================
 # 1. 笔记本
 # ===========================================================================
@@ -31,6 +31,7 @@ class EntryCreate(BaseModel):
     folder: Optional[str] = None
     group_id: Optional[str] = None
     sub_question_order: Optional[int] = None
+    review_count: Optional[int] = Field(default=None, ge=0)
 class EntryUpdate(BaseModel):
     title: Optional[str] = None
     question: Optional[str] = None
@@ -46,6 +47,7 @@ class EntryUpdate(BaseModel):
     sub_question_order: Optional[int] = None
     mastery_level: Optional[int] = None
     next_review_date: Optional[int] = None
+    review_count: Optional[int] = Field(default=None, ge=0)
 # ===========================================================================
 # 3. 复习日志
 # ===========================================================================
@@ -53,8 +55,9 @@ class ReviewLogCreate(BaseModel):
     id: Optional[str] = None
     timestamp: Optional[int] = None
     quality: str
-    is_correct: Optional[bool] = True
+    is_correct: Optional[bool] = None
     elapsed_ms: Optional[int] = 0
+    answer_text: Optional[str] = Field(default=None, max_length=20000)
 
 
 # ===========================================================================
@@ -77,10 +80,38 @@ class QuestionGroupUpdate(BaseModel):
 # ===========================================================================
 # 5. 用户认证
 # ===========================================================================
-class UserRegister(BaseModel):
+class AuthEmail(BaseModel):
     email: str = Field(min_length=3, max_length=255)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        import re
+
+        value = value.strip().lower()
+        if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value):
+            raise ValueError("请输入有效的邮箱地址")
+        return value
+
+
+class EmailCodeRequest(AuthEmail):
+    purpose: Literal["signup", "reset_password"]
+
+
+class UserRegister(AuthEmail):
     password: str = Field(min_length=8, max_length=128)
+    code: str = Field(pattern=r"^[0-9]{6}$")
     full_name: Optional[str] = Field(default=None, max_length=255)
+
+
+class PasswordReset(AuthEmail):
+    code: str = Field(pattern=r"^[0-9]{6}$")
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class PasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
 
 
 class UserPublic(BaseModel):
