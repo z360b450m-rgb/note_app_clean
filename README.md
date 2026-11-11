@@ -2,16 +2,12 @@
 
 官网入口已集成在当前项目中：`/` 为官网首页，`/app/` 为网页版，`/docs/` 为使用文档，`/download/` 为桌面版下载页。运行开发服务即可预览；安装包未配置时会显示待发布状态。[官网维护与部署说明](docs/official-site.md)。
 
-一个围绕错题整理、复习追踪和学习资料管理打造的全栈项目。它从本地优先的笔记应用出发，逐步扩展到了登录认证、远程同步、数据库迁移和后续 AI Agent 接入能力。
+一个围绕错题整理、复习追踪和学习资料管理打造的全栈项目。支持网页和 Electron 桌面端，包含账号隔离、离线存储、远程同步、AI 复习助手和知识库。
 
-![Version](https://img.shields.io/badge/version-2.0.0-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Stack](https://img.shields.io/badge/stack-Vue%203%20%2B%20TypeScript%20%2B%20FastAPI-orange)
 
-<p align="center">
-  <img src="screenshot_main.png" alt="Main workspace" width="45%" />
-  <img src="screenshot_editor.png" alt="Editor view" width="45%" />
-</p>
+[使用指南](src/site/content/user-guide.md) · [功能文档](FEATURES.md) · [当前技术框架](docs/technical-framework.md)
 
 ## Project Highlights
 
@@ -19,7 +15,7 @@
 - 前后端一体化：包含 Vue 3 前端、FastAPI 后端、SQLAlchemy ORM、Alembic 迁移
 - 认证系统已落地：支持注册、登录、JWT 鉴权、当前用户信息接口
 - 业务结构清晰：notebooks、entries、review_logs、users 等模块已拆分
-- 可继续扩展 AI：已经为后续接入 DeepAgents / LangChain 留出了后端演进空间
+- AI 复习：支持作答核对、单题追问、关联组题和基于知识库的学习对话
 
 ## Overview
 
@@ -31,14 +27,14 @@
 - 本地存储和远程持久化的双数据流设计
 - 从单体学习项目逐步演进到 AI 应用的工程思路
 
-它既可以作为学习型作品集项目，也可以继续往“学习助手 / 错题 AI 助手”方向扩展。
-
 ## Core Features
 
 - 错题本 / 笔记本管理
-- 条目创建、编辑、删除、搜索
-- 标签、学科、素材类型筛选
-- 复习记录与统计
+- 条目创建、编辑、删除、搜索，支持题组、公共材料、图片和 LaTeX 公式
+- 文件夹、标签、学科、来源筛选和批量操作
+- 到期复习、自由练习、智能核对和学习统计
+- PDF 试卷识别、图片转文字、归档导入导出
+- 学习资料入库、错题检索和多轮学习对话
 - 登录、注册、当前用户鉴权
 - 本地离线数据存储
 - 远程 MySQL 数据持久化
@@ -148,9 +144,7 @@ notes-app-clean/
   - 题组通过笔记本、复习记录通过题目继承权限；读取、修改、删除和同步均检查当前用户
   - IndexedDB、Electron 数据目录和离线同步队列按账号分开，登录/退出时重新加载页面
 
-## AI Agent Roadmap
-
-### 已接入 RAG 入口
+## AI 复习助手与知识库
 
 首页的“开始复习”入口通过当前后端 `POST /api/review-agent/query` 调用
 `shopkeeper_brain` 的 `POST /query`。发送问题后展示实际回答，支持等待状态、
@@ -169,29 +163,11 @@ Set-Location G:\pycharm\shopkeeper_brain
 当前后端 `.env` 可配置 `RAG_AGENT_URL`（默认 `http://127.0.0.1:8001`）和
 `RAG_AGENT_TIMEOUT_SECONDS`（默认 180 秒）。两个项目各用自己的虚拟环境与配置。
 复习助手默认使用流式查询：后端以 `is_stream=true` 提交任务，再逐块转发 `/stream/{task_id}` 的 SSE；前端实时显示答案增量和独立的处理说明。显式传 `is_stream=false` 仍可取得完整 JSON 答案。
-知识库选择仍保存为本地记录，资料与错题同步、检索流程由后续开发接入。
+选择知识库后，应用会将所选范围交给查询服务。支持导入 PDF 或 Markdown 学习资料，也可将已同步的错题本手动入库。
 
-这个项目后续最适合扩展的不是“自动录入错题”，而是“学习辅助 Agent”。当前比较合理的方向是：
-
-- 读取错题并做薄弱点总结
-- 根据标签、学科、复习记录给出学习建议
-- 帮用户分析某一题为什么错
-- 搜索相似错题
-- 生成每日复习计划
-
-建议的接入顺序：
-
-1. 先做只读 Agent
-2. 先让 Agent 查数据、分析数据、返回建议
-3. 再考虑带确认的写操作
-4. 最后再考虑更复杂的多轮记忆和工具链
-
-如果继续往下做，比较适合接入：
-
-- DeepAgents
-- LangChain / LangGraph
-- DeepSeek 或 OpenAI 模型接口
-- LangSmith tracing
+- 复习每题核对一次。只选答案时先填写理由，判定后可以继续追问或进入下一题。待核对结果在本轮总结中可查。[智能判卷接口](docs/review-grading-api.md)
+- 关联复习先预览同一本中的已有题目。检索不足时按标签或词项补充，再随机补题，确认后按预览顺序练习。[关联组题接口](docs/related-review-bundle.md)
+- 学习资料和错题本索引各有入库入口。源错题更新后，可手动执行入库以更新索引。[学习资料导入接口](docs/knowledge-document-import.md)
 
 ## Local Development
 
@@ -204,10 +180,13 @@ npm run dev
 
 ### Backend
 
+首次启动前，创建 MySQL 数据库，并以 `.env.example` 为模板创建 `.env`，填写数据库连接信息和 `JWT_SECRET_KEY`。在项目根目录运行以下命令。
+
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+alembic upgrade head
 uvicorn src.db_sql.main:app --reload
 ```
 

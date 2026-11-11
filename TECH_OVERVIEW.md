@@ -1,6 +1,6 @@
 # notes-app + RAG-AIAgent 完整技术档案
 
-> 错题本桌面应用 + 云原生 RAG Agent 后端的完整技术架构。**前端**在本目录，**后端**在并列的 `RAG-AIAgent/` 目录。
+> 本文记录早期桌面版与 `RAG-AIAgent` 原型的技术方案。当前版本包含本仓库的 FastAPI 业务后端，并通过接口接入独立的 `shopkeeper_brain` 查询服务。参见[当前技术框架](docs/technical-framework.md)和[本地启动说明](README.md#local-development)。
 
 ---
 

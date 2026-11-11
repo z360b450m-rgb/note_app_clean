@@ -1,8 +1,14 @@
-# 复习窗口：先核对答案，再核对解题依据
+# 复习窗口：每题只核对一次
 
-“提交作答”进入专用判卷接口；首次作答既包含答案又有清楚的理由时直接完成判定，
-不要求重复解释。只有缺少关键理由时才留在当前题，追问并等待补充。
-这次作答的原文始终保留，补充理由不会覆盖首次答案。
+“提交作答”进入专用判卷接口。只选择 A 时，程序先请用户解释一次，不调用判卷模型；
+提交理由后核对一次。答案和解析一起提交时，直接核对一次。
+
+一次返回结果后显示“继续追问”和“下一题”（末题为“结束复习”）。即使模型无法确定结果，
+也允许切题；待核对项保留作答但不写入答对、答错或已判定复习计数。当前会话总结标为“待核对”。
+
+继续追问复用单题学习对话，携带本次答案、理由和点评的节选，支持多轮、失败重试与恢复对话；
+追问只用于讲解，不重新判卷或增加复习次数。判定完成后不再提供理由补交和重新判卷入口。
+网络失败、尚未收到结果时可重试同一次提交；已有持久化结果时重复请求只读取原结果。
 
 最终合并规则：
 
@@ -11,11 +17,11 @@
 | 正确 | 成立 | 完成 | true |
 | 错误 | 成立或明确错误 | 完成 | false |
 | 正确 | 明确错误（包含蒙、抄或错误概念） | 完成 | false |
-| 已判断对错 | 缺少理由 | 等待解释 | null |
-| 任一无法可靠判定 | 任意 | 待核对 | null |
+| 只提交答案 | 未提供理由 | 尚未判卷，等待一次解释 | null |
+| 任一无法可靠判定 | 任意 | 待核对，可切题 | null |
 
-也就是可可靠判定时 `Y = (A == correct) AND (R == valid)`。
-缺理由或证据不足是未完成状态，不能转换为 false。
+可可靠判定时，答案正确且理由成立才判为答对。解释错误也直接完成，不要求改到正确。
+证据不足保留 null，不能转换为 false。
 自然语言、公式、演算均可说明理由，无须固定出现“因为/所以”。
 非未知判断必须附本题学生作答与题干/参考答案/材料的逐字引文，两侧服务都会校验。
 题目或参考答案不全、正文截断、依赖未读取图形时保留待核对。
@@ -40,15 +46,17 @@
 {"explanation_text":"等式两边同时减去1，等式仍成立。","expected_revision":1}
 ```
 
-使用上次响应的 revision。重复最终提交不再次记账；失败后允许相同内容与原 revision 重试。
+只提交答案时，该接口接收一次理由并触发判卷；已有完成结果时直接返回，不再次调用模型或记账。
 并发状态变化返回 409，前端会读取最新状态后保留理由供再次提交。
 
 `GET /api/entries/{entry_id}/review-attempts/{attempt_id}` 可读回持久化状态和最终结果。
 
-响应包含 attempt_id、entry_id、revision、status、answer_verdict、explanation_verdict、
+响应包含 attempt_id、entry_id、revision、status、evaluation_completed、answer_verdict、explanation_verdict、
 is_correct、comment、followup_question、answer_text、explanation_text、review_log、entry_review。
 status 可为 ready、grading、retryable、awaiting_explanation、needs_review、final。
-最终前 review_log/entry_review/is_correct 为空。完成后返回已保存日志及最新计数，
+evaluation_completed 表示已结束本次核对，与是否有明确对错分开。只提交答案、等待首次解释时为 false；
+判卷后为 true，即使结果不确定也不再次要求补写。待核对时 review_log/entry_review/is_correct 为空。
+有明确对错时返回已保存日志及最新计数，
 前端仅更新本地缓存，不再次上传日志或计数。
 
 查询服务提供只读 `POST /review/grade`。业务后端只转发题目 ID、首次作答和补充理由；
@@ -64,7 +72,7 @@ status 可为 ready、grading、retryable、awaiting_explanation、needs_review�
 只有最终 false 增加答错次数；已提交但等待理由、待核对及服务失败均不计入完成次数。
 本接口保留已有复习排期和掌握等级，不把单次判卷结果自动变成 SRS 评级。
 
-判定版本为 `review-answer-reason-v1`，日志 quality 为 agent_correct/agent_incorrect。
+新判定版本为 `review-single-pass-v2`，仍支持读取旧版 `review-answer-reason-v1`。日志 quality 为 agent_correct/agent_incorrect。
 数据库 review_note 保存结构化依据，返回页面时转换为可读的理由和点评。
 这里的“答错”指答案/理由双检后的本次复习任务不通过，包含答案碰巧正确但理由错误。
 该标签与旧记录只按选项判断的标签存在口径差异，未来训练/评估应按判定版本审计，
@@ -79,9 +87,9 @@ status 可为 ready、grading、retryable、awaiting_explanation、needs_review�
 离线测试覆盖清楚理由直接判定、裸答案追问、答案正确理由错误、错误初答保留、
 不可靠依据/网络失败不计数、题目变更、权限、重复提交、过期租约、版本竞争和事务回滚。
 Playwright 使用真实 ReviewPanel/useReview 与模拟判卷接口，覆盖首次作答、补充理由、
-最终反馈、断线同 ID 重试、本地缓存和不可靠判断留在当前题。上述自动测试使用模拟模型。
+最终反馈、断线同 ID 重试、本地缓存、待核对后继续练习，以及追问对话与判卷状态的隔离。上述自动测试使用模拟模型。
 
-本次相关回归：查询服务 78 项、业务后端 62 项，共 140 项通过，类型检查和浏览器流程通过。
+早期判卷接口回归覆盖查询服务 78 项、业务后端 62 项，并通过类型检查和浏览器流程。
 另用已配置模型执行 4 组合成方程题：裸答案返回等待解释，首次清楚解释直接通过，
 补充有效解释通过，正确答案加“我蒙的”理由判为错误，四组结果符合规则。
 这些小样本验证了接口和规则运行，不代表对所有学科、主观题或图形题的准确率评估。
